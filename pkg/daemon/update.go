@@ -49,6 +49,9 @@ const (
 	extensionsRepo        = "/etc/yum.repos.d/coreos-extensions.repo"
 	osImageContentBaseDir = "/run/mco-machine-os-content/"
 
+	// extensionsFile is the json list of extensions from coreos assembler
+	extensionsFile = osImageContentBaseDir + "extensions/extensions.json"
+
 	// These are the actions for a node to take after applying config changes. (e.g. a new machineconfig is applied)
 	// "None" means no special action needs to be taken. A drain will still happen.
 	// This currently happens when ssh keys or pull secret (/var/lib/kubelet/config.json) is changed
@@ -1034,7 +1037,7 @@ func (dn *Daemon) updateKernelArguments(oldConfig, newConfig *mcfgv1.MachineConf
 	return err
 }
 
-func (dn *Daemon) generateExtensionsArgs(oldConfig, newConfig *mcfgv1.MachineConfig) []string {
+func (dn *Daemon) generateExtensionsArgs(oldConfig, newConfig *mcfgv1.MachineConfig) ([]string, error) {
 	removed := []string{}
 	added := []string{}
 
@@ -1064,15 +1067,18 @@ func (dn *Daemon) generateExtensionsArgs(oldConfig, newConfig *mcfgv1.MachineCon
 	extArgs := []string{"update"}
 
 	if dn.os.IsRHCOS() {
-		extensions := getSupportedExtensions()
-		for _, ext := range added {
-			for _, pkg := range extensions[ext] {
-				extArgs = append(extArgs, "--install", pkg)
+		if extensions, err := getSupportedExtensions(); err != nil {
+			return extArgs, err
+		} else {
+			for _, ext := range added {
+				for _, pkg := range extensions[ext] {
+					extArgs = append(extArgs, "--install", pkg)
+				}
 			}
-		}
-		for _, ext := range removed {
-			for _, pkg := range extensions[ext] {
-				extArgs = append(extArgs, "--uninstall", pkg)
+			for _, ext := range removed {
+				for _, pkg := range extensions[ext] {
+					extArgs = append(extArgs, "--uninstall", pkg)
+				}
 			}
 		}
 	}
@@ -1091,24 +1097,48 @@ func (dn *Daemon) generateExtensionsArgs(oldConfig, newConfig *mcfgv1.MachineCon
 		}
 	}
 
-	return extArgs
+	return extArgs, nil
 }
 
 // Returns list of extensions possible to install on a CoreOS based system.
-func getSupportedExtensions() map[string][]string {
+func getSupportedExtensions() (map[string][]string, error) {
 	// In future when list of extensions grow, it will make
 	// more sense to populate it in a dynamic way.
 
 	// These are RHCOS supported extensions.
 	// Each extension keeps a list of packages required to get enabled on host.
-	return map[string][]string{
-		"usbguard":     {"usbguard"},
-		"kernel-devel": {"kernel-devel", "kernel-headers"},
+
+	//if the extensions file is there use it (post march 2021)
+	if _, err := os.Stat(extensionsFile); os.IsNotExist(err) {
+		extensionsFileReader, err := os.OpenFile(extensionsFile,os.O_RDONLY,0666)
+		if err != nil { 
+			return map[string][]string{}, fmt.Errorf("Failed to open extensions file %s : %s", extensionsFile, err) 
+		}
+
+
+		extmap, err := parseSupportedExtensions(extensionsFileReader)
+		if( err != nil ){ 
+			return extmap, err
+		}
+
+		return extmap, nil
+
+		//otherwise keep legacy hard coded behavior
+	} else {
+
+		return map[string][]string{
+			"usbguard":     {"usbguard"},
+			"kernel-devel": {"kernel-devel", "kernel-headers"},
+		}, nil
 	}
 }
 
 func validateExtensions(exts []string) error {
-	supportedExtensions := getSupportedExtensions()
+	supportedExtensions, err := getSupportedExtensions()
+	if err != nil {
+		return err
+	}
+
 	invalidExts := []string{}
 	for _, ext := range exts {
 		if _, ok := supportedExtensions[ext]; !ok {
@@ -1138,9 +1168,12 @@ func (dn *Daemon) applyExtensions(oldConfig, newConfig *mcfgv1.MachineConfig) er
 		return err
 	}
 
-	args := dn.generateExtensionsArgs(oldConfig, newConfig)
+	args, err := dn.generateExtensionsArgs(oldConfig, newConfig)
+	if err != nil {
+		return err
+	}
 	glog.Infof("Applying extensions : %+q", args)
-	_, err := runGetOut("rpm-ostree", args...)
+	_, err = runGetOut("rpm-ostree", args...)
 
 	return err
 }

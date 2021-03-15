@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -645,5 +646,73 @@ func checkReconcilableResults(t *testing.T, key string, reconcilableError error)
 func checkIrreconcilableResults(t *testing.T, key string, reconcilableError error) {
 	if reconcilableError == nil {
 		t.Errorf("Different %s values should not be reconcilable.", key)
+	}
+}
+
+func TestParseExtensions(t *testing.T) {
+
+	supportedExtensionsReader := strings.NewReader(`
+	{
+	  "extensions": {
+	    "kernel-devel": {
+	      "packages": [
+	        "kernel-devel-4.18.0-240.15.1.el8_3",
+	        "kernel-headers-4.18.0-240.15.1.el8_3"
+	      ],
+	      "match-base-evr": "kernel",
+	      "kind": "os-extension"
+	    },
+	    "kernel": {
+	      "packages": [
+	        "kernel-4.18.0-240.15.1.el8_3",
+	        "kernel-core-4.18.0-240.15.1.el8_3",
+	        "kernel-modules-4.18.0-240.15.1.el8_3",
+	        "kernel-modules-extra-4.18.0-240.15.1.el8_3"
+	      ],
+	      "match-base-evr": "kernel",
+	      "kind": "development"
+	    },
+	    "kernel-rt": {
+	      "packages": [
+	        "kernel-rt-core",
+	        "kernel-rt-kvm",
+	        "kernel-rt-modules",
+	        "kernel-rt-modules-extra",
+	        "kernel-rt-devel"
+	      ],
+	      "architectures": [
+	        "x86_64"
+	      ],
+	      "kind": "os-extension"
+	    },	
+	    "usbguard": {
+	      "packages": [
+	        "usbguard"
+	      ],
+	      "kind": "os-extension"
+	    }
+	  },
+	  "repos": [
+	    "rhel-8-nfv"
+	  ]
+	}`)
+
+	parsedExtensions := map[string][]string{
+		"kernel-devel": {"kernel-devel-4.18.0-240.15.1.el8_3", "kernel-headers-4.18.0-240.15.1.el8_3"},
+		"kernel-rt":    {"kernel-rt-core", "kernel-rt-kvm", "kernel-rt-modules", "kernel-rt-modules-extra", "kernel-rt-devel"},
+		"usbguard":     {"usbguard"},
+	}
+
+	//make sure we parse the extensions out right
+	supportedExtensions, err := parseSupportedExtensions(supportedExtensionsReader)
+	if err != nil {
+		t.Errorf("Expected a clean parse, got error %s", err)
+	}
+
+	if !reflect.DeepEqual(supportedExtensions, parsedExtensions) {
+		t.Error("Expected only os-extensions, list did not match")
+		for ext, pack := range supportedExtensions {
+			fmt.Printf("%s --> %s\n", ext, pack)
+		}
 	}
 }
