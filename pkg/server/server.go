@@ -40,7 +40,8 @@ type appenderFunc func(*igntypes.Config, *mcfgv1.MachineConfig) error
 // Server defines the interface that is implemented by different
 // machine config server implementations.
 type Server interface {
-	GetConfig(poolRequest) (*runtime.RawExtension, error)
+	GetIgnConfig(poolRequest) (*runtime.RawExtension, error)
+	GetKernelArguments(poolRequest) ([]string, error)
 }
 
 func getAppenders(currMachineConfig string, version *semver.Version, f kubeconfigFunc) []appenderFunc {

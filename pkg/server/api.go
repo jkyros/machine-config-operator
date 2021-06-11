@@ -121,7 +121,7 @@ func (sh *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		version:           reqConfigVer,
 	}
 
-	conf, err := sh.server.GetConfig(cr)
+	conf, err := sh.server.GetIgnConfig(cr)
 	if err != nil {
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusInternalServerError)

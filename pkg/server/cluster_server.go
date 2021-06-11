@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"time"
 
+	igntypes "github.com/coreos/ignition/v2/config/v3_2/types" //TODO(jkyros): bump this when you bump the default
 	yaml "github.com/ghodss/yaml"
 	"github.com/openshift/machine-config-operator/internal/clients"
+	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 	ctrlcommon "github.com/openshift/machine-config-operator/pkg/controller/common"
 	mcfginformers "github.com/openshift/machine-config-operator/pkg/generated/informers/externalversions"
 	corev1 "k8s.io/api/core/v1"
@@ -82,9 +84,47 @@ func NewClusterServer(kubeConfig, apiserverURL string) (Server, error) {
 	}, nil
 }
 
+// getMachineConfig fetches the machine config from the cluster,
+// based on the pool request.
+func (cs *clusterServer) getMachineConfig(cr poolRequest) (*mcfgv1.MachineConfig, *igntypes.Config, error) {
+	mp, err := cs.machineConfigPoolLister.Get(cr.machineConfigPool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not fetch pool. err: %v", err)
+	}
+
+	// For new nodes, we roll out the latest if at least one node has successfully updated.
+	// This avoids deadlocks in situations where the old configuration broke somehow
+	// (e.g. pull secret expired)
+	// and also avoids provisioning a new node, only to update it not long thereafter.
+	var currConf string
+	if mp.Status.UpdatedMachineCount > 0 {
+		currConf = mp.Spec.Configuration.Name
+	} else {
+		currConf = mp.Status.Configuration.Name
+	}
+
+	mc, err := cs.machineConfigLister.Get(currConf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not fetch config %s, err: %v", currConf, err)
+	}
+	ignConf, err := ctrlcommon.ParseAndConvertConfig(mc.Spec.Config.Raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing Ignition config failed with error: %v", err)
+	}
+
+	appenders := getAppenders(currConf, cr.version, cs.kubeconfigFunc)
+	for _, a := range appenders {
+		if err := a(&ignConf, mc); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return mc, &ignConf, nil
+}
+
 // GetConfig fetches the machine config(type - Ignition) from the cluster,
 // based on the pool request.
-func (cs *clusterServer) GetConfig(cr poolRequest) (*runtime.RawExtension, error) {
+func (cs *clusterServer) GetIgnConfig(cr poolRequest) (*runtime.RawExtension, error) {
 	mp, err := cs.machineConfigPoolLister.Get(cr.machineConfigPool)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch pool. err: %w", err)
@@ -122,6 +162,17 @@ func (cs *clusterServer) GetConfig(cr poolRequest) (*runtime.RawExtension, error
 		return nil, err
 	}
 	return &runtime.RawExtension{Raw: rawConf}, nil
+}
+
+// GetKernelArguments fetches the machine config kernel arguments from the cluster,
+// based on the pool request.
+func (cs *clusterServer) GetKernelArguments(cr poolRequest) ([]string, error) {
+	mc, _, err := cs.getMachineConfig(cr)
+	if err != nil {
+		return nil, err
+	}
+
+	return mc.Spec.KernelArguments, nil
 }
 
 // kubeconfigFromSecret creates a kubeconfig with the certificate

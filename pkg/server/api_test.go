@@ -21,11 +21,16 @@ import (
 )
 
 type mockServer struct {
-	GetConfigFn func(poolRequest) (*runtime.RawExtension, error)
+	GetIgnConfigFn       func(poolRequest) (*runtime.RawExtension, error)
+	GetKernelArgumentsFn func(poolRequest) ([]string, error)
 }
 
-func (ms *mockServer) GetConfig(pr poolRequest) (*runtime.RawExtension, error) {
-	return ms.GetConfigFn(pr)
+func (ms *mockServer) GetIgnConfig(pr poolRequest) (*runtime.RawExtension, error) {
+	return ms.GetIgnConfigFn(pr)
+}
+
+func (ms *mockServer) GetKernelArguments(pr poolRequest) ([]string, error) {
+	return ms.GetKernelArgumentsFn(pr)
 }
 
 type checkResponse func(t *testing.T, response *http.Response)
@@ -275,7 +280,7 @@ func TestAPIHandler(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			ms := &mockServer{
-				GetConfigFn: scenario.serverFunc,
+				GetIgnConfigFn: scenario.serverFunc,
 			}
 			handler := NewServerAPIHandler(ms)
 			handler.ServeHTTP(w, scenario.request)
@@ -552,7 +557,7 @@ func TestAPIServer(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			ms := &mockServer{
-				GetConfigFn: scenario.serverFunc,
+				GetIgnConfigFn: scenario.serverFunc,
 			}
 			server := NewAPIServer(NewServerAPIHandler(ms), 0, false, "", "")
 			server.handler.ServeHTTP(w, scenario.request)
