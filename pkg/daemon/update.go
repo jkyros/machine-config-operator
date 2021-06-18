@@ -58,6 +58,13 @@ const (
 	postConfigChangeActionReloadCrio = "reload crio"
 )
 
+type specialUpdateBehavior int
+
+const (
+	updateBehaviorDefault specialUpdateBehavior = 0 << iota
+	updateBehaviorPopulateConfigFromCluster
+)
+
 func writeFileAtomicallyWithDefaults(fpath string, b []byte) error {
 	return writeFileAtomically(fpath, b, defaultDirectoryPermissions, defaultFilePermissions, -1, -1)
 }
@@ -138,24 +145,7 @@ func (dn *Daemon) performPostConfigChangeAction(postConfigChangeActions []string
 		dn.logSystem("%s config reloaded successfully! Desired config %s has been applied, skipping reboot", serviceName, configName)
 	}
 
-	// We are here, which means reboot was not needed to apply the configuration.
-
-	// Get current state of node, in case of an error reboot
-	state, err := dn.getStateAndConfigs(configName)
-	if err != nil {
-		return fmt.Errorf("Could not apply update: error processing state and configs. Error: %v", err)
-	}
-
-	var inDesiredConfig bool
-	if inDesiredConfig, err = dn.updateConfigAndState(state); err != nil {
-		return fmt.Errorf("Could not apply update: setting node's state to Done failed. Error: %v", err)
-	}
-	if inDesiredConfig {
-		return nil
-	}
-
-	// currentConfig != desiredConfig, kick off an update
-	return dn.triggerUpdateWithMachineConfig(state.currentConfig, state.desiredConfig)
+	return nil
 }
 
 // finalizeBeforeReboot is the last step in an update() and then we take appropriate postConfigChangeAction.
@@ -517,28 +507,120 @@ func calculatePostConfigChangeAction(oldConfig, newConfig *mcfgv1.MachineConfig)
 	return calculatePostConfigChangeActionFromFileDiffs(oldIgnConfig, newIgnConfig), nil
 }
 
+func (dn *Daemon) retrieveConfigFromClusterIfEmpty(currentConfig, desiredConfig *mcfgv1.MachineConfig) error {
+	if currentConfig == nil {
+		ccAnnotation, err := getNodeAnnotation(dn.node, constants.CurrentMachineConfigAnnotationKey)
+		if err != nil {
+			return err
+		}
+		currentConfig, err = dn.mcLister.Get(ccAnnotation)
+		if err != nil {
+			return err
+		}
+	}
+
+	if desiredConfig == nil {
+		dcAnnotation, err := getNodeAnnotation(dn.node, constants.DesiredMachineConfigAnnotationKey)
+		if err != nil {
+			return err
+		}
+		desiredConfig, err = dn.mcLister.Get(dcAnnotation)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // update the node to the provided node configuration.
-func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
+func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig, updateOptions specialUpdateBehavior) (retErr error) {
+
+	// If one of our configs is empty, and we don't want it to stay that way,
+	// ask the cluster to fill them in
+	if (updateOptions & updateBehaviorPopulateConfigFromCluster) != 0 {
+		err := dn.retrieveConfigFromClusterIfEmpty(oldConfig, newConfig)
+		if err != nil {
+			return err
+		}
+
+	}
+
+	// Catch SIGTERM so we don't get interrupted while updating
+	dn.catchIgnoreSIGTERM()
+	defer func() {
+		dn.cancelSIGTERM()
+	}()
+
+	// loop until we are done, previously this was infinite recursion
+	for {
+
+		// Do the actual updates
+		actionsTaken, err := dn.performUpdate(oldConfig, newConfig)
+		if err != nil {
+			return err
+		}
+
+		// Reboot (or whatever else) if necessary
+		err = dn.performPostConfigChangeAction(actionsTaken, newConfig.GetName())
+		if err != nil {
+			return err
+		}
+
+		// We are here, which means reboot was not needed to apply the configuration.
+
+		// Get current state of node, in case of an error reboot
+		state, err := dn.getStateAndConfigs(newConfig.GetName())
+		if err != nil {
+			return fmt.Errorf("Could not apply update: error processing state and configs. Error: %v", err)
+		}
+
+		// Update nodes and uncordon
+		inDesiredConfig, err := dn.updateConfigAndState(state)
+		if err != nil {
+			return fmt.Errorf("Could not apply update: setting node's state to Done failed. Error: %v", err)
+		}
+
+		// Everything worked, looks like we won
+		if inDesiredConfig {
+			glog.Info("Exiting update loop cleanly. In desired config")
+			return nil
+		}
+
+		// Not quite in the state we want yet, but we didn't get errors,  start the loop over
+		glog.Info("Not in desired config yet, need to do another loop")
+
+		// If one of our configs is empty, ask the cluster to fill them in
+		// primes the loop again
+		if (updateOptions & updateBehaviorPopulateConfigFromCluster) != 0 {
+			err := dn.retrieveConfigFromClusterIfEmpty(oldConfig, newConfig)
+			if err != nil {
+				return err
+			}
+
+		}
+
+	}
+
+}
+
+// performs the update and returns the actions taken during the update
+func (dn *Daemon) performUpdate(oldConfig, newConfig *mcfgv1.MachineConfig) (actions []string, retErr error) {
+
 	oldConfig = canonicalizeEmptyMC(oldConfig)
 
 	if dn.nodeWriter != nil {
 		state, err := getNodeAnnotationExt(dn.node, constants.MachineConfigDaemonStateAnnotationKey, true)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if state != constants.MachineConfigDaemonStateDegraded && state != constants.MachineConfigDaemonStateUnreconcilable {
 			if err := dn.nodeWriter.SetWorking(dn.kubeClient.CoreV1().Nodes(), dn.nodeLister, dn.name); err != nil {
-				return errors.Wrap(err, "error setting node's state to Working")
+				return nil, errors.Wrap(err, "error setting node's state to Working")
 			}
 		}
 	}
 
-	dn.catchIgnoreSIGTERM()
-	defer func() {
-		if retErr != nil {
-			dn.cancelSIGTERM()
-		}
-	}()
+	// eat SIGTERM while we're actively updating so we don't get left in an inconsistent state
 
 	oldConfigName := oldConfig.GetName()
 	newConfigName := newConfig.GetName()
@@ -558,24 +640,25 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 			}
 			dn.recorder.Eventf(mcRef, corev1.EventTypeWarning, "FailedToReconcile", wrappedErr.Error())
 		}
-		return errors.Wrapf(errUnreconcilable, "%v", wrappedErr)
+		return nil, errors.Wrapf(errUnreconcilable, "%v", wrappedErr)
 	}
 
 	dn.logSystem("Starting update from %s to %s: %+v", oldConfigName, newConfigName, diff)
 
+	// Actions get sent back so performPostConfigChangeAction can figure out what to do
 	actions, err := calculatePostConfigChangeAction(oldConfig, newConfig)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check and perform node drain if required
 	drain, err := isDrainRequired(actions, oldConfig, newConfig)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if drain {
 		if err := dn.performDrain(); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		glog.Info("Changes do not require drain, skipping.")
@@ -583,9 +666,10 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 
 	// update files on disk that need updating
 	if err := dn.updateFiles(oldConfig, newConfig); err != nil {
-		return err
+		return nil, err
 	}
 
+	// roll back file writes if we have issues updating
 	defer func() {
 		if retErr != nil {
 			if err := dn.updateFiles(newConfig, oldConfig); err != nil {
@@ -597,15 +681,15 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 
 	oldIgnConfig, err := ctrlcommon.ParseAndConvertConfig(oldConfig.Spec.Config.Raw)
 	if err != nil {
-		return fmt.Errorf("parsing old Ignition config failed with error: %v", err)
+		return nil, fmt.Errorf("parsing old Ignition config failed with error: %v", err)
 	}
 	newIgnConfig, err := ctrlcommon.ParseAndConvertConfig(newConfig.Spec.Config.Raw)
 	if err != nil {
-		return fmt.Errorf("parsing new Ignition config failed with error: %v", err)
+		return nil, fmt.Errorf("parsing new Ignition config failed with error: %v", err)
 	}
 
 	if err := dn.updateSSHKeys(newIgnConfig.Passwd.Users); err != nil {
-		return err
+		return nil, err
 	}
 
 	defer func() {
@@ -618,7 +702,7 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 	}()
 
 	if err := dn.storeCurrentConfigOnDisk(newConfig); err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if retErr != nil {
@@ -630,7 +714,7 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 	}()
 
 	if err := dn.applyOSChanges(oldConfig, newConfig); err != nil {
-		return err
+		return nil, err
 	}
 
 	defer func() {
@@ -646,17 +730,17 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 	// We are keeping this to maintain compatibility and OKD requirement.
 	tuningChanged, err := UpdateTuningArgs(KernelTuningFile, CmdLineFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if tuningChanged {
 		glog.Info("Updated kernel tuning arguments")
 	}
 
 	if err := dn.finalizeBeforeReboot(newConfig); err != nil {
-		return err
+		return nil, err
 	}
 
-	return dn.performPostConfigChangeAction(actions, newConfig.GetName())
+	return actions, nil
 }
 
 // machineConfigDiff represents an ad-hoc difference between two MachineConfig objects.
@@ -1890,9 +1974,11 @@ func (dn *Daemon) logSystem(format string, a ...interface{}) {
 func (dn *Daemon) catchIgnoreSIGTERM() {
 	dn.updateActiveLock.Lock()
 	defer dn.updateActiveLock.Unlock()
+
 	if dn.updateActive {
 		return
 	}
+	glog.Info("Adding SIGTERM protection")
 	dn.updateActive = true
 }
 
@@ -1900,6 +1986,7 @@ func (dn *Daemon) cancelSIGTERM() {
 	dn.updateActiveLock.Lock()
 	defer dn.updateActiveLock.Unlock()
 	if dn.updateActive {
+		glog.Info("Removing SIGTERM protection")
 		dn.updateActive = false
 	}
 }

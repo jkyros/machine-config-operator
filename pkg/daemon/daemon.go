@@ -462,7 +462,7 @@ func (dn *Daemon) syncNode(key string) error {
 		return errors.Wrapf(err, "prepping update")
 	}
 	if current != nil || desired != nil {
-		if err := dn.triggerUpdateWithMachineConfig(current, desired); err != nil {
+		if err := dn.update(current, desired, updateBehaviorPopulateConfigFromCluster); err != nil {
 			return err
 		}
 	}
@@ -554,7 +554,7 @@ func (dn *Daemon) RunFirstbootCompleteMachineconfig() error {
 	}
 
 	dn.skipReboot = true
-	err = dn.update(nil, &mc)
+	err = dn.update(nil, &mc, updateBehaviorDefault)
 	if err != nil {
 		return err
 	}
@@ -1096,7 +1096,7 @@ func (dn *Daemon) checkStateOnFirstRun() error {
 		glog.Info("Validated on-disk state")
 	} else {
 		glog.Infof("Skipping on-disk validation; %s present", constants.MachineConfigDaemonForceFile)
-		return dn.triggerUpdateWithMachineConfig(state.currentConfig, state.desiredConfig)
+		return dn.update(state.currentConfig, state.desiredConfig, updateBehaviorPopulateConfigFromCluster)
 	}
 
 	// We've validated state. Now, ensure that node is in desired state
@@ -1113,7 +1113,7 @@ func (dn *Daemon) checkStateOnFirstRun() error {
 	}
 	// currentConfig != desiredConfig, and we're not booting up into the desiredConfig.
 	// Kick off an update.
-	return dn.triggerUpdateWithMachineConfig(state.currentConfig, state.desiredConfig)
+	return dn.update(state.currentConfig, state.desiredConfig, updateBehaviorPopulateConfigFromCluster)
 }
 
 // updateConfigAndState updates node to desired state, labels nodes as done and uncordon
@@ -1190,7 +1190,7 @@ func (dn *Daemon) runOnceFromMachineConfig(machineConfig mcfgv1.MachineConfig, c
 			return nil
 		}
 		// At this point we have verified we need to update
-		if err := dn.triggerUpdateWithMachineConfig(current, &machineConfig); err != nil {
+		if err := dn.update(current, &machineConfig, updateBehaviorPopulateConfigFromCluster); err != nil {
 			dn.nodeWriter.SetDegraded(err, dn.kubeClient.CoreV1().Nodes(), dn.nodeLister, dn.name)
 			return err
 		}
@@ -1198,7 +1198,7 @@ func (dn *Daemon) runOnceFromMachineConfig(machineConfig mcfgv1.MachineConfig, c
 	}
 	if contentFrom == onceFromLocalConfig {
 		// Execute update without hitting the cluster
-		return dn.update(nil, &machineConfig)
+		return dn.update(nil, &machineConfig, updateBehaviorDefault)
 	}
 	// Otherwise return an error as the input format is unsupported
 	return fmt.Errorf("%v is not a path nor url; can not run once", contentFrom)
@@ -1289,35 +1289,6 @@ func (dn *Daemon) completeUpdate(desiredConfigName string) error {
 	dn.logSystem("completed update for config %s", desiredConfigName)
 
 	return nil
-}
-
-// triggerUpdateWithMachineConfig starts the update. It queries the cluster for
-// the current and desired config if they weren't passed.
-func (dn *Daemon) triggerUpdateWithMachineConfig(currentConfig, desiredConfig *mcfgv1.MachineConfig) error {
-	if currentConfig == nil {
-		ccAnnotation, err := getNodeAnnotation(dn.node, constants.CurrentMachineConfigAnnotationKey)
-		if err != nil {
-			return err
-		}
-		currentConfig, err = dn.mcLister.Get(ccAnnotation)
-		if err != nil {
-			return err
-		}
-	}
-
-	if desiredConfig == nil {
-		dcAnnotation, err := getNodeAnnotation(dn.node, constants.DesiredMachineConfigAnnotationKey)
-		if err != nil {
-			return err
-		}
-		desiredConfig, err = dn.mcLister.Get(dcAnnotation)
-		if err != nil {
-			return err
-		}
-	}
-
-	// run the update process. this function doesn't currently return.
-	return dn.update(currentConfig, desiredConfig)
 }
 
 // validateOnDiskState compares the on-disk state against what a configuration
