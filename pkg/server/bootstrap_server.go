@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 
+	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	yaml "github.com/ghodss/yaml"
 	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/runtime"
