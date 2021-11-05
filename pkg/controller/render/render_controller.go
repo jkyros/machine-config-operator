@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/golang/glog"
@@ -48,6 +49,12 @@ var (
 	controllerKind = mcfgv1.SchemeGroupVersion.WithKind("MachineConfigPool")
 
 	machineconfigKind = mcfgv1.SchemeGroupVersion.WithKind("MachineConfig")
+
+	// files that cause the pending config to be marked "critical" -- things like the
+	// products of certificate rotations, etc that will end the cluster if not rolled out
+	criticalConfigFiles = map[string]string{
+		"/etc/kubernetes/kubelet-ca.crt": "Kubelet CA",
+	}
 )
 
 // Controller defines the render controller.
@@ -416,6 +423,13 @@ func (ctrl *Controller) syncMachineConfigPool(key string) error {
 		return nil
 	}
 
+	// TODO(jkyros): This is probably stupid here
+	if pool.Spec.Configuration.Name == pool.Status.Configuration.Name {
+		if val, ok := pool.Annotations[ctrlcommon.ImportantConfigAnnotationKey]; ok {
+			glog.Infof("--> Annotation is present, removing (%s) : %s", pool.Name, val)
+			delete(pool.Annotations, ctrlcommon.ImportantConfigAnnotationKey)
+		}
+	}
 	selector, err := metav1.LabelSelectorAsSelector(pool.Spec.MachineConfigSelector)
 	if err != nil {
 		return err
@@ -518,6 +532,14 @@ func (ctrl *Controller) syncGeneratedMachineConfig(pool *mcfgv1.MachineConfigPoo
 	}
 
 	newPool.Spec.Configuration.Name = generated.Name
+
+	// if there is critical config present, annotate the pool
+	// TODO(jkyros): we seem to be able to make it here without the rendered config existing yet -- not sure how
+	err = ctrl.annotateImportantConfig(newPool)
+	if err != nil {
+		glog.Infof("Got error annotationg pool (%s) %v", pool.Name, err)
+	}
+
 	// TODO(walters) Use subresource or JSON patch, but the latter isn't supported by the unit test mocks
 	pool, err = ctrl.client.MachineconfigurationV1().MachineConfigPools().Update(context.TODO(), newPool, metav1.UpdateOptions{})
 	if err != nil {
@@ -527,6 +549,43 @@ func (ctrl *Controller) syncGeneratedMachineConfig(pool *mcfgv1.MachineConfigPoo
 
 	if err := ctrl.garbageCollectRenderedConfigs(pool); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// annotateImportantConfig places an annotation on a machine config pool if the "spec" configuration has
+// critical changes that need to be deployed
+func (ctrl *Controller) annotateImportantConfig(pool *mcfgv1.MachineConfigPool) error {
+
+	glog.Infof("Annotating critical config for %s", pool.Name)
+	// Now let's see if we have important configuration pending
+	diffFileSet, err := ctrl.diffMachineConfigFilesForPool(pool)
+	if err != nil {
+		return err
+	}
+
+	// Go through our list of files and alert if they match our important list
+	var importantPoolConfig []string
+	for _, path := range diffFileSet {
+		// If this is an important file, trigger its alert
+		if _, ok := criticalConfigFiles[path]; ok {
+			importantPoolConfig = append(importantPoolConfig, path)
+
+		}
+
+	}
+	// If there is critical config, annotate the pool with it (since the pool is already getting updated here)
+	if len(importantPoolConfig) > 0 {
+		glog.Infof("Found some important config: %s", strings.Join(importantPoolConfig, ","))
+		// adding annotations will totally crash if they're not initialized
+		if pool.Annotations == nil {
+			pool.Annotations = make(map[string]string)
+		}
+		// update the new pool object with the annotations
+		pool.Annotations[ctrlcommon.ImportantConfigAnnotationKey] = strings.Join(importantPoolConfig, ",")
+	} else {
+		glog.Infof("No important config found in %s", pool.Name)
 	}
 
 	return nil
@@ -627,4 +686,46 @@ func getMachineConfigsForPool(pool *mcfgv1.MachineConfigPool, configs []*mcfgv1.
 		return nil, fmt.Errorf("couldn't find any MachineConfigs for pool: %v", pool.Name)
 	}
 	return out, nil
+}
+
+// diffMachineConfigFilesForPool retrieves the machine config specified by the pool spec and status,
+// compares them, and returns the list of file paths that are different
+func (ctrl *Controller) diffMachineConfigFilesForPool(pool *mcfgv1.MachineConfigPool) ([]string, error) {
+
+	// The config we would be going to
+	spec_name := pool.Spec.Configuration.Name
+	// The config we're in right now
+	status_name := pool.Status.Configuration.Name
+
+	if spec_name == status_name {
+		glog.Infof("Pool is synced, nothing to compare: %s", spec_name)
+		return nil, nil
+	}
+
+	// Get the machine config objects
+	statusConfig, err := ctrl.mcLister.Get(status_name)
+	if apierrors.IsNotFound(err) {
+		glog.V(2).Infof("MachineConfig %v has been deleted", status_name)
+		return nil, err
+	}
+
+	specConfig, err := ctrl.mcLister.Get(spec_name)
+	if apierrors.IsNotFound(err) {
+		glog.V(2).Infof("MachineConfigPool %v has been deleted", spec_name)
+		return nil, err
+	}
+
+	// Make sure we can coax the objects into ignitionv3
+	statusIgnConfig, err := ctrlcommon.ParseAndConvertConfig(statusConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, err
+	}
+	specIgnConfig, err := ctrlcommon.ParseAndConvertConfig(specConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, err
+	}
+
+	fileDiff := ctrlcommon.CalculateConfigFileDiffs(statusIgnConfig, specIgnConfig)
+
+	return fileDiff, nil
 }
