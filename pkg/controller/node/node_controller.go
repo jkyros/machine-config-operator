@@ -744,7 +744,18 @@ func (ctrl *Controller) syncMachineConfigPool(key string) error {
 		if mcfgv1.IsMachineConfigPoolConditionTrue(pool.Status.Conditions, mcfgv1.MachineConfigPoolUpdating) {
 			glog.Infof("Pool %s is paused and will not update.", pool.Name)
 		}
+
+		// See if there are any important files stuck behind pause and alert if there are
+		err := ctrl.alertIfImportantFilesPending(pool)
+		if err != nil {
+			glog.Errorf("Unable to check pool %s for pending important configuration: %v", pool.Name, err)
+		}
+
 		return ctrl.syncStatusOnly(pool)
+	} else {
+
+		// We aren't paused anymore, so remove the alert
+		ctrl.resetImportantFileAlerts(pool)
 	}
 
 	nodes, err := ctrl.getNodesForPool(pool)
@@ -994,4 +1005,22 @@ func getErrorString(err error) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// alertIfImportantFilesPending checks to see if there are any important files in the
+// machineconfig that the pool should be moving to, and alerts if there are
+func (ctrl *Controller) alertIfImportantFilesPending(pool *mcfgv1.MachineConfigPool) error {
+
+	if _, ok := pool.Annotations[ctrlcommon.ImportantConfigAnnotationKey]; ok {
+		ctrlcommon.MCCImportantConfigPaused.WithLabelValues(pool.Name).Set(1)
+	}
+
+	return nil
+}
+
+// DisableImportantMatchineConfigFileAlert turns off any "paused file" alerts that were firing for the pool
+func (ctrl *Controller) resetImportantFileAlerts(pool *mcfgv1.MachineConfigPool) {
+
+	ctrlcommon.MCCImportantConfigPaused.WithLabelValues(pool.Name).Set(0)
+
 }
