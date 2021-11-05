@@ -1,6 +1,31 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
+  name: machine-config-controller
+  namespace: openshift-machine-config-operator
+  labels:
+    k8s-app: machine-config-controller
+  annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  groups:
+    - name: mcc-important-config-paused
+      rules:
+        - alert: MachineConfigControllerImportantConfigPaused
+          expr: |
+             sum by (path, pool) (max_over_time(machine_config_controller_important_config_paused[5m])) > 0
+          for: 60m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Paused pool {{$labels.pool}} is preventing important config {{$labels.path}} from syncing"
+            description:  "Machine config pools have a 'pause' feature, which allows configuration to be rendered, but prevents it from being rolled out to the nodes. Unforunately, this also stops important cluster configuration ( like certificate rotations ) from taking place. This alert is telling the user that important configuration has been rendered into a new machine config, but that the rendered configuration can't be rolled out because the pool is paused. To keep cluster in healthy state, please unpause the pool {{$labels.pool}} so that MCO can apply updated config on nodes" "
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
   name: machine-config-daemon
   namespace: openshift-machine-config-operator
   labels:

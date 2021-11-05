@@ -29,9 +29,9 @@ var (
 	}
 
 	startOpts struct {
-		kubeconfig string
-		templates  string
-
+		kubeconfig            string
+		templates             string
+		promMetricsURL        string
 		resourceLockNamespace string
 	}
 )
@@ -40,6 +40,7 @@ func init() {
 	rootCmd.AddCommand(startCmd)
 	startCmd.PersistentFlags().StringVar(&startOpts.kubeconfig, "kubeconfig", "", "Kubeconfig file to access a remote cluster (testing only)")
 	startCmd.PersistentFlags().StringVar(&startOpts.resourceLockNamespace, "resourcelock-namespace", metav1.NamespaceSystem, "Path to the template files used for creating MachineConfig objects")
+	startCmd.PersistentFlags().StringVar(&startOpts.promMetricsURL, "metrics-url", "127.0.0.1:8797", "URL for prometheus metrics listener")
 }
 
 func runStartCmd(cmd *cobra.Command, args []string) {
@@ -54,7 +55,11 @@ func runStartCmd(cmd *cobra.Command, args []string) {
 		ctrlcommon.WriteTerminationError(errors.Wrapf(err, "Creating clients"))
 	}
 	run := func(ctx context.Context) {
+
 		ctrlctx := ctrlcommon.CreateControllerContext(cb, ctx.Done(), componentName)
+
+		// Start the metrics handler
+		go ctrlcommon.StartMetricsListener(startOpts.promMetricsURL, ctrlctx.Stop)
 
 		controllers := createControllers(ctrlctx)
 
