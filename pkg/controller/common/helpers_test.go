@@ -1,6 +1,7 @@
 package common
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/clarketm/json"
@@ -379,4 +380,40 @@ func TestRemoveIgnDuplicateFilesAndUnits(t *testing.T) {
 	expectedIgn2Config.Systemd.Units = append(expectedIgn2Config.Systemd.Units, unitExpected)
 
 	assert.Equal(t, expectedIgn2Config, convertedIgn2Config)
+}
+
+func TestDiffMachineConfigFilesForPool(t *testing.T) {
+
+	// make an "old" config with the existing file in it
+	mode := 420
+	var testIgn3ConfigOld ign3types.Config
+	var testIgn3ConfigNew ign3types.Config
+
+	testIgn3ConfigOld.Ignition.Version = "3.2.0"
+	oldtestfiledata := "data:,oldcertificates"
+	oldTempFile := ign3types.File{Node: ign3types.Node{Path: "/etc/kubernetes/kubelet-ca.crt"},
+		FileEmbedded1: ign3types.FileEmbedded1{Contents: ign3types.Resource{Source: &oldtestfiledata}, Mode: &mode}}
+	testIgn3ConfigOld.Storage.Files = append(testIgn3ConfigOld.Storage.Files, oldTempFile)
+
+	// make a "new" config with a change to that file
+
+	testIgn3ConfigNew.Ignition.Version = "3.2.0"
+	newtestfiledata := "data:,newcertificates"
+	newTempFile := ign3types.File{Node: ign3types.Node{Path: "/etc/kubernetes/kubelet-ca.crt"},
+		FileEmbedded1: ign3types.FileEmbedded1{Contents: ign3types.Resource{Source: &newtestfiledata}, Mode: &mode}}
+	testIgn3ConfigNew.Storage.Files = append(testIgn3ConfigNew.Storage.Files, newTempFile)
+
+	// if it works, it should notice the file changed
+	expectedDiffFileSet := []string{"/etc/kubernetes/kubelet-ca.crt"}
+	actualDiffFileSet := CalculateConfigFileDiffs(testIgn3ConfigOld, testIgn3ConfigNew)
+	unchangedDiffFileset := CalculateConfigFileDiffs(testIgn3ConfigOld, testIgn3ConfigOld)
+
+	if !reflect.DeepEqual(expectedDiffFileSet, actualDiffFileSet) {
+		t.Errorf("Actual file diff: %s did not match expected: %s", actualDiffFileSet, expectedDiffFileSet)
+	}
+
+	if !reflect.DeepEqual(unchangedDiffFileset, []string{}) {
+		t.Errorf("File changes detected where there should have been none: %s", unchangedDiffFileset)
+	}
+
 }

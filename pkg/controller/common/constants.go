@@ -7,6 +7,9 @@ const (
 	// ControllerConfigName is the name of the ControllerConfig object that controllers use
 	ControllerConfigName = "machine-config-controller"
 
+	// ImportantConfigAnnotationKey is used to tag pools where the spec config contains critical config that has not yet been fully rolled out
+	ImportantConfigAnnotationKey = "machineconfiguration.openshift.io/important-config-files-pending"
+
 	// KernelTypeDefault denominates the default kernel type
 	KernelTypeDefault = "default"
 
