@@ -715,3 +715,72 @@ func GetIgnitionFileDataByPath(config *ign3types.Config, path string) ([]byte, e
 	}
 	return nil, nil
 }
+
+type IgnitionFileDiff struct {
+	OldFiles  map[string]*ign3types.File
+	NewFiles  map[string]*ign3types.File
+	Added     map[string]*ign3types.File
+	Removed   map[string]*ign3types.File
+	Modified  map[string]*ign3types.File
+	AnyChange map[string]*ign3types.File
+}
+
+func NewIgnitionFileDiff() *IgnitionFileDiff {
+	ifd := &IgnitionFileDiff{
+		OldFiles:  make(map[string]*ign3types.File),
+		NewFiles:  make(map[string]*ign3types.File),
+		Added:     make(map[string]*ign3types.File),
+		Removed:   make(map[string]*ign3types.File),
+		Modified:  make(map[string]*ign3types.File),
+		AnyChange: make(map[string]*ign3types.File),
+	}
+	return ifd
+}
+
+// CalculateConfigFileDiffs generates a mapping of file path to change action
+func CalculateIgnitionFileDiffs(oldIgnConfig, newIgnConfig *ign3types.Config) *IgnitionFileDiff {
+	var ifd = NewIgnitionFileDiff()
+
+	// Put the old files in a map indexed by path
+	for num, f := range oldIgnConfig.Storage.Files {
+		ifd.OldFiles[f.Path] = &oldIgnConfig.Storage.Files[num]
+	}
+
+	// Put the new files in a map indexed by path
+	for num, f := range newIgnConfig.Storage.Files {
+		ifd.NewFiles[f.Path] = &newIgnConfig.Storage.Files[num]
+	}
+
+	// First check if any files were removed
+	for path := range ifd.OldFiles {
+		oldFile, ok := ifd.NewFiles[path]
+		if !ok {
+			// File has been removed
+			ifd.Removed[path] = oldFile
+			ifd.AnyChange[path] = ifd.NewFiles[path]
+		}
+	}
+
+	// Now check if any files were added/changed
+	for path, newFile := range ifd.NewFiles {
+		oldFile, ok := ifd.OldFiles[path]
+		if !ok {
+			// File has been added
+			ifd.Added[path] = ifd.NewFiles[path]
+			ifd.AnyChange[path] = ifd.NewFiles[path]
+		} else if !reflect.DeepEqual(oldFile, newFile) {
+			// File has been changed
+			ifd.Modified[path] = ifd.NewFiles[path]
+			ifd.AnyChange[path] = ifd.NewFiles[path]
+		}
+	}
+
+	jout, _ := json.MarshalIndent(ifd, "  ", "    ")
+	glog.Infof("DIFF: %s", jout)
+
+	return ifd
+}
+
+// For the registries case this would look like:
+// diff := CalculateConfigFileDiffs(old,new)
+//

@@ -410,3 +410,35 @@ func TestCalculateConfigFileDiffs(t *testing.T) {
 		t.Errorf("File changes detected where there should have been none: %s", unchangedDiffFileset)
 	}
 }
+
+func TestCalculateIgnFileDiffs(t *testing.T) {
+	var testIgn3ConfigOld ign3types.Config
+	var testIgn3ConfigNew ign3types.Config
+
+	oldTempFile := helpers.NewIgnFile("/etc/kubernetes/kubelet-ca.crt", "oldcertificates")
+	newTempFile := helpers.NewIgnFile("/etc/kubernetes/kubelet-ca.crt", "newcertificates")
+
+	// Make an "old" config with the existing file in it
+	testIgn3ConfigOld.Ignition.Version = "3.2.0"
+	testIgn3ConfigOld.Storage.Files = append(testIgn3ConfigOld.Storage.Files, oldTempFile)
+
+	// Make a "new" config with a change to that file
+	testIgn3ConfigNew.Ignition.Version = "3.2.0"
+	testIgn3ConfigNew.Storage.Files = append(testIgn3ConfigNew.Storage.Files, newTempFile)
+
+	// If it works, it should notice the file changed
+	//expectedDiffFileSet := []string{"/etc/kubernetes/kubelet-ca.crt"}
+	actualDiffFileSet := CalculateIgnitionFileDiffs(&testIgn3ConfigOld, &testIgn3ConfigNew)
+	unchangedDiffFileset := CalculateIgnitionFileDiffs(&testIgn3ConfigOld, &testIgn3ConfigOld)
+
+	t.Logf("STUFF: %v", actualDiffFileSet)
+	t.Logf("UNCHANGED: %v", unchangedDiffFileset)
+	/*
+		if !reflect.DeepEqual(expectedDiffFileSet, actualDiffFileSet) {
+			t.Errorf("Actual file diff: %s did not match expected: %s", actualDiffFileSet, expectedDiffFileSet)
+		}
+
+		if !reflect.DeepEqual(unchangedDiffFileset, []string{}) {
+			t.Errorf("File changes detected where there should have been none: %s", unchangedDiffFileset)
+		}*/
+}

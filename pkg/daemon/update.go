@@ -428,7 +428,7 @@ func (dn *Daemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newConfig 
 
 }
 
-func calculatePostConfigChangeActionFromFileDiffs(oldIgnConfig, newIgnConfig ign3types.Config) (actions []string) {
+func calculatePostConfigChangeActionFromFileDiffs(diff *machineConfigDiff) (actions []string) {
 	filesPostConfigChangeActionNone := []string{
 		"/etc/kubernetes/kubelet-ca.crt",
 		"/var/lib/kubelet/config.json",
@@ -439,42 +439,8 @@ func calculatePostConfigChangeActionFromFileDiffs(oldIgnConfig, newIgnConfig ign
 		"/etc/containers/registries.conf",
 	}
 
-	oldFileSet := make(map[string]ign3types.File)
-	for _, f := range oldIgnConfig.Storage.Files {
-		oldFileSet[f.Path] = f
-	}
-	newFileSet := make(map[string]ign3types.File)
-	for _, f := range newIgnConfig.Storage.Files {
-		newFileSet[f.Path] = f
-	}
-	diffFileSet := []string{}
-
-	// First check if any files were removed
-	for path := range oldFileSet {
-		_, ok := newFileSet[path]
-		if !ok {
-			// debug: remove
-			glog.Infof("File diff: %v was deleted", path)
-			diffFileSet = append(diffFileSet, path)
-		}
-	}
-
-	// Now check if any files were added/changed
-	for path, newFile := range newFileSet {
-		oldFile, ok := oldFileSet[path]
-		if !ok {
-			// debug: remove
-			glog.Infof("File diff: %v was added", path)
-			diffFileSet = append(diffFileSet, path)
-		} else if !reflect.DeepEqual(oldFile, newFile) {
-			// debug: remove
-			glog.Infof("File diff: detected change to %v", newFile.Path)
-			diffFileSet = append(diffFileSet, path)
-		}
-	}
-
 	// Now calculate action
-	for _, k := range diffFileSet {
+	for k, _ := range diff.fileDiff.AnyChange {
 		if ctrlcommon.InSlice(k, filesPostConfigChangeActionNone) {
 			continue
 		} else if ctrlcommon.InSlice(k, filesPostConfigChangeActionReloadCrio) {
@@ -510,7 +476,7 @@ func calculatePostConfigChangeAction(diff *machineConfigDiff, oldIgnConfig, newI
 	}
 
 	// We don't actually have to consider ssh keys changes, which is the only section of passwd that is allowed to change
-	return calculatePostConfigChangeActionFromFileDiffs(oldIgnConfig, newIgnConfig), nil
+	return calculatePostConfigChangeActionFromFileDiffs(diff), nil
 }
 
 // update the node to the provided node configuration.
@@ -668,6 +634,8 @@ type machineConfigDiff struct {
 	units      bool
 	kernelType bool
 	extensions bool
+
+	fileDiff *ctrlcommon.IgnitionFileDiff
 }
 
 // isEmpty returns true if the machineConfigDiff has no changes, or
@@ -676,7 +644,7 @@ type machineConfigDiff struct {
 // objects happen to have different Ignition versions but are otherwise
 // the same.  (Probably a better way would be to canonicalize)
 func (mcDiff *machineConfigDiff) isEmpty() bool {
-	emptyDiff := machineConfigDiff{}
+	emptyDiff := machineConfigDiff{fileDiff: ctrlcommon.NewIgnitionFileDiff()}
 	return reflect.DeepEqual(mcDiff, &emptyDiff)
 }
 
@@ -719,6 +687,9 @@ func newMachineConfigDiff(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineC
 	kargsEmpty := len(oldConfig.Spec.KernelArguments) == 0 && len(newConfig.Spec.KernelArguments) == 0
 	extensionsEmpty := len(oldConfig.Spec.Extensions) == 0 && len(newConfig.Spec.Extensions) == 0
 
+	// Lets calculate the file diffs while we're here
+	ifd := ctrlcommon.CalculateIgnitionFileDiffs(&oldIgn, &newIgn)
+
 	return &machineConfigDiff{
 		osUpdate:   oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
 		kargs:      !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
@@ -728,6 +699,7 @@ func newMachineConfigDiff(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineC
 		units:      !reflect.DeepEqual(oldIgn.Systemd.Units, newIgn.Systemd.Units),
 		kernelType: canonicalizeKernelType(oldConfig.Spec.KernelType) != canonicalizeKernelType(newConfig.Spec.KernelType),
 		extensions: !(extensionsEmpty || reflect.DeepEqual(oldConfig.Spec.Extensions, newConfig.Spec.Extensions)),
+		fileDiff:   ifd,
 	}, nil
 }
 
