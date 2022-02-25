@@ -503,6 +503,13 @@ func (dn *Daemon) setWorking() error {
 	return nil
 }
 
+// this should probably become part of the implementation of an Updater interface
+func getIgnitionFileDataReadFunc(ignConfig *ign3types.Config) ReadFileFunc {
+	return func(path string) ([]byte, error) {
+		return ctrlcommon.GetIgnitionFileDataByPath(ignConfig, path)
+	}
+}
+
 // update the node to the provided node configuration.
 func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
 	if err := dn.setWorking(); err != nil {
@@ -551,7 +558,7 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 	}
 
 	// Check and perform node drain if required
-	drain, err := isDrainRequired(actions, diffFileSet, oldIgnConfig, newIgnConfig)
+	drain, err := isDrainRequired(actions, diffFileSet, getIgnitionFileDataReadFunc(&oldIgnConfig), getIgnitionFileDataReadFunc(&newIgnConfig))
 	if err != nil {
 		return err
 	}
