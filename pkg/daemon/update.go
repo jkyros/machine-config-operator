@@ -117,9 +117,6 @@ func reloadService(name string) error {
 }
 
 // performPostConfigChangeAction takes action based on what postConfigChangeAction has been asked.
-// For non-reboot action, it applies configuration, updates node's config and state.
-// In the end uncordon node to schedule workload.
-// If at any point an error occurs, we reboot the node so that node has correct configuration.
 func (dn *Daemon) performPostConfigChangeAction(postConfigChangeActions []string, configName string) error {
 	if ctrlcommon.InSlice(postConfigChangeActionReboot, postConfigChangeActions) {
 		dn.logSystem("Rebooting node")
@@ -148,10 +145,10 @@ func (dn *Daemon) performPostConfigChangeAction(postConfigChangeActions []string
 		}
 		dn.logSystem("%s config reloaded successfully! Desired config %s has been applied, skipping reboot", serviceName, configName)
 	}
+	return nil
+}
 
-	// We are here, which means reboot was not needed to apply the configuration.
-
-	// Get current state of node, in case of an error reboot
+func (dn *Daemon) getAndUpdateConfigAndState(configName string) error {
 	state, err := dn.getStateAndConfigs(configName)
 	if err != nil {
 		return fmt.Errorf("could not apply update: error processing state and configs. Error: %w", err)
@@ -636,7 +633,16 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 		return err
 	}
 
-	return dn.performPostConfigChangeAction(actions, newConfig.GetName())
+	if err := dn.performPostConfigChangeAction(actions, newConfig.GetName()); err != nil {
+		return err
+	}
+
+	// if dn.skipReboot, a reboot might be performed manually after update(), in which case we don't want to update state
+	// else reboot was not needed to apply the configuration, and we need to update state
+	if !dn.skipReboot {
+		return dn.getAndUpdateConfigAndState(newConfig.GetName())
+	}
+	return nil
 }
 
 // This is currently a subsection copied over from update() since we need to be more nuanced. Should eventually
