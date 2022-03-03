@@ -116,9 +116,6 @@ func reloadService(name string) error {
 }
 
 // performPostConfigChangeAction takes action based on what postConfigChangeAction has been asked.
-// For non-reboot action, it applies configuration, updates node's config and state.
-// In the end uncordon node to schedule workload.
-// If at any point an error occurs, we reboot the node so that node has correct configuration.
 func (dn *Daemon) performPostConfigChangeAction(postConfigChangeActions []string, configName string) error {
 	if ctrlcommon.InSlice(postConfigChangeActionReboot, postConfigChangeActions) {
 		dn.logSystem("Rebooting node")
@@ -147,10 +144,10 @@ func (dn *Daemon) performPostConfigChangeAction(postConfigChangeActions []string
 		}
 		dn.logSystem("%s config reloaded successfully! Desired config %s has been applied, skipping reboot", serviceName, configName)
 	}
+	return nil
+}
 
-	// We are here, which means reboot was not needed to apply the configuration.
-
-	// Get current state of node, in case of an error reboot
+func (dn *Daemon) getAndUpdateConfigAndState(configName string) error {
 	state, err := dn.getStateAndConfigs(configName)
 	if err != nil {
 		return fmt.Errorf("Could not apply update: error processing state and configs. Error: %v", err)
@@ -430,32 +427,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 
 }
 
-func calculatePostConfigChangeActionFromFileDiffs(diffFileSet []string) (actions []string) {
-	filesPostConfigChangeActionNone := []string{
-		"/etc/kubernetes/kubelet-ca.crt",
-		"/var/lib/kubelet/config.json",
-	}
-	filesPostConfigChangeActionReloadCrio := []string{
-		constants.ContainerRegistryConfPath,
-		GPGNoRebootPath,
-		"/etc/containers/policy.json",
-	}
-
-	actions = []string{postConfigChangeActionNone}
-	for _, path := range diffFileSet {
-		if ctrlcommon.InSlice(path, filesPostConfigChangeActionNone) {
-			continue
-		} else if ctrlcommon.InSlice(path, filesPostConfigChangeActionReloadCrio) {
-			actions = []string{postConfigChangeActionReloadCrio}
-		} else {
-			actions = []string{postConfigChangeActionReboot}
-			return
-		}
-	}
-	return
-}
-
-func calculatePostConfigChangeAction(diff *machineConfigDiff, diffFileSet []string) ([]string, error) {
+func (dn *Daemon) calculatePostConfigChangeActionFromFiles(diffFileSet []string) ([]string, error) {
 	// If a machine-config-daemon-force file is present, it means the user wants to
 	// move to desired state without additional validation. We will reboot the node in
 	// this case regardless of what MachineConfig diff is.
@@ -467,20 +439,49 @@ func calculatePostConfigChangeAction(diff *machineConfigDiff, diffFileSet []stri
 		return []string{postConfigChangeActionReboot}, nil
 	}
 
+	filesPostConfigChangeActionNone := []string{
+		"/etc/kubernetes/kubelet-ca.crt",
+		"/var/lib/kubelet/config.json",
+	}
+	if dn.os.IsFCOS() {
+		filesPostConfigChangeActionNone = append(filesPostConfigChangeActionNone, filepath.Join(coreUserSSHPath, "authorized_keys.d", "ignition"))
+	} else {
+		filesPostConfigChangeActionNone = append(filesPostConfigChangeActionNone, filepath.Join(coreUserSSHPath, "authorized_keys"))
+	}
+
+	filesPostConfigChangeActionReloadCrio := []string{
+		constants.ContainerRegistryConfPath,
+		GPGNoRebootPath,
+		"/etc/containers/policy.json",
+	}
+
+	actions := []string{postConfigChangeActionNone}
+	for _, path := range diffFileSet {
+		if ctrlcommon.InSlice(path, filesPostConfigChangeActionNone) {
+			continue
+		} else if ctrlcommon.InSlice(path, filesPostConfigChangeActionReloadCrio) {
+			actions = []string{postConfigChangeActionReloadCrio}
+		} else {
+			return []string{postConfigChangeActionReboot}, nil
+		}
+	}
+	return actions, nil
+}
+
+func (dn *Daemon) calculatePostConfigChangeActionWithMCDiff(diff *machineConfigDiff, diffFileSet []string) ([]string, error) {
+	// Note this function may only return []string{postConfigChangeActionReboot} directly,
+	// since calculatePostConfigChangeActionFromFiles may find files that require a reboot
+
+	// We don't actually have to consider ssh keys changes, which is the only section of passwd that is allowed to change
 	if diff.osUpdate || diff.kargs || diff.fips || diff.units || diff.kernelType || diff.extensions {
 		// must reboot
 		return []string{postConfigChangeActionReboot}, nil
 	}
 
-	// We don't actually have to consider ssh keys changes, which is the only section of passwd that is allowed to change
-	return calculatePostConfigChangeActionFromFileDiffs(diffFileSet), nil
+	return dn.calculatePostConfigChangeActionFromFiles(diffFileSet)
 }
 
-// update the node to the provided node configuration.
-func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
-
-	oldConfig = canonicalizeEmptyMC(oldConfig)
-
+func (dn *Daemon) setWorking() error {
 	if dn.nodeWriter != nil {
 		state, err := getNodeAnnotationExt(dn.node, constants.MachineConfigDaemonStateAnnotationKey, true)
 		if err != nil {
@@ -492,6 +493,14 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 			}
 		}
 	}
+	return nil
+}
+
+// update the node to the provided node configuration.
+func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
+	if err := dn.setWorking(); err != nil {
+		return fmt.Errorf("failed to set working: %w", err)
+	}
 
 	dn.catchIgnoreSIGTERM()
 	defer func() {
@@ -500,6 +509,7 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 		dn.cancelSIGTERM()
 	}()
 
+	oldConfig = canonicalizeEmptyMC(oldConfig)
 	oldConfigName := oldConfig.GetName()
 	newConfigName := newConfig.GetName()
 
@@ -533,22 +543,20 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 	dn.logSystem("Starting update from %s to %s: %+v", oldConfigName, newConfigName, diff)
 
 	diffFileSet := ctrlcommon.CalculateConfigFileDiffs(&oldIgnConfig, &newIgnConfig)
-	actions, err := calculatePostConfigChangeAction(diff, diffFileSet)
+	actions, err := dn.calculatePostConfigChangeActionWithMCDiff(diff, diffFileSet)
 	if err != nil {
 		return err
 	}
 
 	// Check and perform node drain if required
-	drain, err := isDrainRequired(actions, diffFileSet, oldIgnConfig, newIgnConfig)
-	if err != nil {
-		return err
+	readOldFile := func(path string) ([]byte, error) {
+		return ctrlcommon.GetIgnitionFileDataByPath(&oldIgnConfig, path)
 	}
-	if drain {
-		if err := dn.performDrain(); err != nil {
-			return err
-		}
-	} else {
-		glog.Info("Changes do not require drain, skipping.")
+	readNewFile := func(path string) ([]byte, error) {
+		return ctrlcommon.GetIgnitionFileDataByPath(&newIgnConfig, path)
+	}
+	if err := dn.drainIfRequired(actions, diffFileSet, readOldFile, readNewFile); err != nil {
+		return err
 	}
 
 	// update files on disk that need updating
@@ -610,19 +618,20 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 
 	// Ideally we would want to update kernelArguments only via MachineConfigs.
 	// We are keeping this to maintain compatibility and OKD requirement.
-	tuningChanged, err := UpdateTuningArgs(KernelTuningFile, CmdLineFile)
-	if err != nil {
+	if err := UpdateTuningArgs(KernelTuningFile, CmdLineFile); err != nil {
 		return err
-	}
-	if tuningChanged {
-		glog.Info("Updated kernel tuning arguments")
 	}
 
 	if err := dn.finalizeBeforeReboot(newConfig); err != nil {
 		return err
 	}
 
-	return dn.performPostConfigChangeAction(actions, newConfig.GetName())
+	if err := dn.performPostConfigChangeAction(actions, newConfig.GetName()); err != nil {
+		return err
+	}
+
+	// We are here, which means reboot was not needed to apply the configuration.
+	return dn.getAndUpdateConfigAndState(newConfig.GetName())
 }
 
 // machineConfigDiff represents an ad-hoc difference between two MachineConfig objects.
@@ -2017,8 +2026,6 @@ func (dn *Daemon) reboot(rationale string) error {
 // experimentalUpdateLayeredConfig() pretends to do the normal config update for the pool but actually does
 // an image update instead. This function should be completely thrown away.
 func (dn *Daemon) experimentalUpdateLayeredConfig() error {
-
-	// TODO(jkyros): right now you skip drain and reboot, you should do those
 	// TODO(jkyros): config drift should work EXCEPT for the OSImageURL
 
 	// TODO(jkyros): this is awful, but we know we rolled a node event so we can just ignore the configs
@@ -2032,14 +2039,88 @@ func (dn *Daemon) experimentalUpdateLayeredConfig() error {
 		return nil
 	}
 
+	// currentImage == desiredImage is equivalent to:
+	// booted.ContainerImageReference == desiredImage && staged.ID == "" && booted.LiveReplaced == ""
+	// ||
+	// staged.ContainerImageReference == desiredImage && booted.LiveReplaced == staged.Checksum
 	if currentImage == desiredImage {
-		// Orrrr....if we've live updated to it
 		glog.Infof("Node is on proper image %s", desiredImage)
 
-		glog.Infof("Completing pending config %s", desiredConfig)
-		if err := dn.completeUpdate(desiredConfig); err != nil {
-			MCDUpdateState.WithLabelValues("", err.Error()).SetToCurrentTime()
+	} else {
+		// At this point we know we need to rebase
+		if err := dn.setWorking(); err != nil {
+			return fmt.Errorf("failed to set working: %w", err)
+		}
 
+		pullSecret, err := dn.GetPullSecret()
+		if err != nil {
+			return err
+		}
+
+		// TODO drop NodeUpdaterClient or change its interface
+		client := &RpmOstreeClient{}
+		if err := client.RebaseLayered(desiredImage, pullSecret); err != nil {
+			return err
+		}
+
+		state, err := client.GetState()
+		if err != nil {
+			return err
+		}
+
+		var staged Deployment
+		var activeChecksum string
+		for _, deployment := range state.Deployments {
+			if deployment.Staged {
+				staged = deployment
+			}
+			if deployment.Booted {
+				if deployment.LiveReplaced != "" {
+					activeChecksum = deployment.LiveReplaced
+				} else {
+					activeChecksum = deployment.Checksum
+				}
+			}
+		}
+
+		diffFileSet, err := Diff(activeChecksum, staged.Checksum)
+		if err != nil {
+			return fmt.Errorf("failed to diff container images: %w", err)
+		}
+		actions, err := dn.calculatePostConfigChangeActionFromFiles(diffFileSet)
+		if err != nil {
+			return err
+		}
+
+		// TODO(jkyros): the prep update function will think we have more work to do
+		// if the current config path still populated
+		os.Remove(dn.currentConfigPath)
+
+		// Check and perform node drain if required
+		readOldFile := func(path string) ([]byte, error) {
+			return Cat(currentImage, path)
+		}
+		readNewFile := func(path string) ([]byte, error) {
+			return Cat(desiredImage, path)
+		}
+		if err := dn.drainIfRequired(actions, diffFileSet, readOldFile, readNewFile); err != nil {
+			return err
+		}
+
+		// Ideally we would want to update kernelArguments only via MachineConfigs.
+		// We are keeping this to maintain compatibility and OKD requirement.
+		if err := UpdateTuningArgs(KernelTuningFile, CmdLineFile); err != nil {
+			return err
+		}
+
+		if !ctrlcommon.InSlice(postConfigChangeActionReboot, actions) {
+			client.ApplyLive()
+		}
+		if err := dn.performPostConfigChangeAction(actions, desiredImage); err != nil {
+			return err
+		}
+		if dn.recorder != nil {
+			dn.recorder.Eventf(getNodeRef(dn.node), corev1.EventTypeNormal, "NodeDone", fmt.Sprintf("Setting node %s, currentConfig %s to Done", dn.node.Name, desiredImage))
 		}
 
 		// TODO(jkyros): For now I'm just making the pool happy so it's like "yeah I'm done"
@@ -2049,102 +2130,12 @@ func (dn *Daemon) experimentalUpdateLayeredConfig() error {
 			return nil
 		}
 
-		//glog.Infof("In desired config %s", state.currentConfig.GetName())
-		//MCDUpdateState.WithLabelValues(state.currentConfig.GetName(), "").SetToCurrentTime()
-
-	} else {
-		// We think we have work to do
-
-		client := &RpmOstreeClient{}
-		state, err := client.GetState()
-		if err != nil {
-			return err
-		}
-
-		// Look through our deployments
-		// If we've rebased to it, but not booted, that's okay IF we've live-applied
-		// but we need to know whether we're live applying when we rebase
-		// ughhhh it really should be transactional
-
-		for _, deployment := range state.Deployments {
-
-			// What we're looking for is at least in the list
-			if strings.TrimPrefix(deployment.ContainerImageReference, "ostree-unverified-registry:") == desiredImage {
-				// We rebased but we haven't booted, might be a liveapply
-				if deployment.Staged == true {
-					//TODO(jkyros): Check to see about liveapply
-					glog.Infof("Node is staged to %s, checking to see if we've liveapplied", desiredImage)
-
-					// For now we're just setting done because we know this worked, haven't gotten to reboot logic yet
-					if err := dn.nodeWriter.SetDone(dn.kubeClient.CoreV1().Nodes(), dn.nodeLister, dn.name, desiredConfig); err != nil {
-						errLabelStr := fmt.Sprintf("error setting node's state to Done: %v", err)
-						MCDUpdateState.WithLabelValues("", errLabelStr).SetToCurrentTime()
-						return nil
-					}
-
-					return nil
-				}
-
-				// Everything is perfect, we're already there the good way
-				if deployment.Booted == true {
-					glog.Infof("Node is already in image %s", desiredImage)
-					//TODO(jkyros): Add an annotation
-					return nil
-				}
-			}
-
-		}
-
-		pullSecret, err := dn.GetPullSecret()
-		if err != nil {
-			return err
-		}
-
-		//TODO(jkyros): what should these perms be
-		os.Mkdir("/run/ostree", 0544)
-
-		err = ioutil.WriteFile("/run/ostree/auth.json", pullSecret, 0400)
-		if err != nil {
-			return err
-		}
-
-		_, err = client.RebaseLayered(desiredImage)
-		if err != nil {
-			return err
-		}
-
-		//defer os.Unlink("/run/ostree/auth.json")
-		if err := dn.nodeWriter.SetDone(dn.kubeClient.CoreV1().Nodes(), dn.nodeLister, dn.name, desiredConfig); err != nil {
-			errLabelStr := fmt.Sprintf("error setting node's state to Done: %v", err)
-			MCDUpdateState.WithLabelValues("", errLabelStr).SetToCurrentTime()
-			return nil
-		}
-
-		// TODO(jkyros): the prep update function will think we have more work to do
-		// if the current config path still populated
-		os.Remove(dn.currentConfigPath)
 	}
-
-	// 	get the image from the host
-	// see if it's the one in spec config
-	// if it's not, then we need to
-	// 0.) run the rules engine on it to see if we can live-apply this
-	// 1.) if we can, do that
-	// 2;) but how do we signal that we did that? Rebase anyway, but don't boot?
-	// 3.) I mean that's what liveapply does so I guess if we trust it it's cool? we can come back?
-	// so then we just check it to see if it's either in, or pending + delta both are okay
-	// 1.) copy the auth to the local host
-	// 2.) rebase to it
-
-	//deployment := client.GetBootedDeployment()
-	//osImageUrl := client.GetBootedOSImageURL()
-	//os
-
 	return nil
 }
 
 func (dn *Daemon) GetPullSecret() ([]byte, error) {
-	var targetNamespace = "openshift-machine-config-operator"
+	var targetNamespace = ctrlcommon.MCONamespace
 
 	// Get the service accoutn
 	mcdServiceAccount, err := dn.kubeClient.CoreV1().ServiceAccounts(targetNamespace).Get(context.TODO(), "machine-config-daemon", metav1.GetOptions{})
