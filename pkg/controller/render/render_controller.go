@@ -464,6 +464,12 @@ func (ctrl *Controller) syncMachineConfigPool(key string) error {
 	// If we do, snarf out the latest image and annotate the pool with it
 	// Trying "pull" based on an enqueue from the image stream informer rather than push
 	if pool.Name == "layered" {
+
+		// TODO(jkyros): sometimes we crash when these are empty, this probably needs to be cleaner
+		// than just stuffing annotations in the map directly
+		if pool.Annotations == nil {
+			pool.Annotations = map[string]string{}
+		}
 		// Do we have an image stream
 		is, err := ctrl.imageclient.ImageV1().ImageStreams("openshift-machine-config-operator").Get(context.TODO(), "mco-content-"+pool.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
