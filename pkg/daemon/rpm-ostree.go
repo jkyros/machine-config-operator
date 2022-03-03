@@ -425,6 +425,16 @@ func (r *RpmOstreeClient) RebaseLayered(imgURL string) (changed bool, err error)
 	return
 }
 
+func Diff(fromRev, toRev string) ([]string, error) {
+	// TODO
+	return []string{}, nil
+}
+
+func Cat(commit string, path string) ([]byte, error) {
+	// TODO
+	return []byte{}, nil
+}
+
 // truncate a string using runes/codepoints as limits.
 // This specifically will avoid breaking a UTF-8 value.
 func truncate(input string, limit int) string {
