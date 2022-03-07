@@ -105,6 +105,9 @@ test-e2e:
 test-e2e-single-node:
 	go test -tags=$(GOTAGS) -failfast -timeout 110m -v$${WHAT:+ -run="$$WHAT"} ./test/e2e-single-node/
 
+test-e2e-layering:
+	go test -tags=$(GOTAGS) -failfast -timeout 90m -v$${WHAT:+ -run="$$WHAT"} ./test/e2e-layering/
+
 bootstrap-e2e:
 	./hack/bootstrap-e2e-test.sh
 
