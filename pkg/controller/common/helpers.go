@@ -879,3 +879,9 @@ func GetLongestValidCertificate(certificateList []*x509.Certificate, subjectPref
 	}
 	return nil
 }
+func IsLayeredPool(pool *mcfgv1.MachineConfigPool) bool {
+	if _, ok := pool.Labels[ExperimentalLayeringPoolLabel]; ok {
+		return true
+	}
+	return false
+}
