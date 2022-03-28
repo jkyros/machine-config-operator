@@ -164,7 +164,7 @@ func (r *RpmOstreeClient) GetStatusStructured() (*RpmOstreeStatus, error) {
 	}
 
 	if err := json.Unmarshal(output, &rosState); err != nil {
-		return nil, errors.Wrapf(err, "failed to parse `rpm-ostree status --json` output (%s)", truncate(string(output), 30))
+		return nil, fmt.Errorf("failed to parse `rpm-ostree status --json` output (%s)", truncate(string(output), 30))
 	}
 	return &rosState, nil
 }

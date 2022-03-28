@@ -62,6 +62,7 @@ type clusterNodeWriter struct {
 type NodeWriter interface {
 	Run(stop <-chan struct{})
 	SetDone(dcAnnotation string) error
+	SetLayeredDone(diAnnotation string) error
 	SetWorking() error
 	SetUnreconcilable(err error) error
 	SetDegraded(err error) error
@@ -136,6 +137,24 @@ func (nw *clusterNodeWriter) Run(stop <-chan struct{}) {
 			msg.responseChannel <- r
 		}
 	}
+}
+
+// SetLayeredDone sets current image, state to done, and clears any Degraded/Unreconcilable reason
+func (nw *clusterNodeWriter) SetLayeredDone(diAnnotation string) error {
+	annos := map[string]string{
+		constants.MachineConfigDaemonStateAnnotationKey: constants.MachineConfigDaemonStateDone,
+		constants.CurrentImageConfigAnnotationKey:       diAnnotation,
+		// clear out any Degraded/Unreconcilable reason
+		constants.MachineConfigDaemonReasonAnnotationKey: "",
+	}
+	MCDState.WithLabelValues(constants.MachineConfigDaemonStateDone, "").SetToCurrentTime()
+	respChan := make(chan response, 1)
+	nw.writer <- message{
+		annos:           annos,
+		responseChannel: respChan,
+	}
+	r := <-respChan
+	return r.err
 }
 
 // SetDone sets the state to Done.

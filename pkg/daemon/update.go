@@ -2073,7 +2073,7 @@ func (dn *Daemon) experimentalUpdateLayeredConfig() error {
 		}
 
 		// TODO(jkyros): For now I'm just making the pool happy so it's like "yeah I'm done"
-		if err := dn.nodeWriter.SetDone(dn.kubeClient.CoreV1().Nodes(), dn.nodeLister, dn.name, desiredConfig); err != nil {
+		if err := dn.nodeWriter.SetDone(desiredConfig); err != nil {
 			errLabelStr := fmt.Sprintf("error setting node's state to Done: %v", err)
 			MCDUpdateState.WithLabelValues("", errLabelStr).SetToCurrentTime()
 			return nil
@@ -2105,7 +2105,7 @@ func (dn *Daemon) experimentalUpdateLayeredConfig() error {
 
 						// TODO(jkyros): Check to see about liveapply rather than just marking this done
 						glog.Infof("Node is staged to %s, checking to see if we've liveapplied", desiredImage)
-						if err := dn.nodeWriter.SetDone(dn.kubeClient.CoreV1().Nodes(), dn.nodeLister, dn.name, desiredConfig); err != nil {
+						if err := dn.nodeWriter.SetDone(desiredConfig); err != nil {
 							errLabelStr := fmt.Sprintf("error setting node's state to Done: %v", err)
 							MCDUpdateState.WithLabelValues("", errLabelStr).SetToCurrentTime()
 							return nil
@@ -2141,7 +2141,7 @@ func (dn *Daemon) experimentalUpdateLayeredConfig() error {
 		// I write this in the image build now, so config checker still works AND I don't get stuck on it
 		os.Remove(dn.currentConfigPath)
 
-		_, err = client.RebaseLayered(desiredImage)
+		err = client.RebaseLayered(desiredImage)
 		if err != nil {
 			return err
 		}
@@ -2165,7 +2165,7 @@ func (dn *Daemon) experimentalUpdateLayeredConfig() error {
 
 		// I don't reboot the node here, I just mark it done, so anything that requires post-config actions will currently
 		// break, but you *can* reboot the node and it will come back properly.
-		if err := dn.nodeWriter.SetDone(dn.kubeClient.CoreV1().Nodes(), dn.nodeLister, dn.name, desiredConfig); err != nil {
+		if err := dn.nodeWriter.SetDone(desiredConfig); err != nil {
 			errLabelStr := fmt.Sprintf("error setting node's state to Done: %v", err)
 			MCDUpdateState.WithLabelValues("", errLabelStr).SetToCurrentTime()
 			return nil
