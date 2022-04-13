@@ -2,10 +2,13 @@ package render
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
+	ign3types "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/golang/glog"
 	mcoResourceApply "github.com/openshift/machine-config-operator/lib/resourceapply"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
@@ -41,7 +44,11 @@ const (
 	// renderDelay is a pause to avoid churn in MachineConfigs; see
 	// https://github.com/openshift/machine-config-operator/issues/301
 	renderDelay = 5 * time.Second
+
+	kubeletCAFilePath = "/etc/kubernetes/kubelet-ca.crt"
 )
+
+var kubeAPIToKubeletSignerNamePrefixes = []string{"openshift-kube-apiserver-operator_kube-apiserver-to-kubelet-signer@", "kube-apiserver-to-kubelet-signer"}
 
 var (
 	// controllerKind contains the schema.GroupVersionKind for this controller type.
@@ -496,6 +503,55 @@ func (ctrl *Controller) syncGeneratedMachineConfig(pool *mcfgv1.MachineConfigPoo
 		ctrlcommon.OSImageURLOverride.WithLabelValues(pool.Name).Set(0)
 	}
 
+	if pool.Spec.Paused {
+		glog.Infof("Pool %s is paused, might need to splice", pool.Name)
+		// Generate a spliced config containing only our sneak files
+		spliced, source, err := ctrl.generateSplicedMachineConfig(pool, generated, cc)
+		if err != nil {
+			glog.Warningf("Something went wrong generating the splice: %s", err)
+			return err
+		}
+
+		// If we got a splice back, we need to assign it to the pool
+		if spliced != nil {
+			glog.Infof("Successfully generated spliced config %s", spliced.Name)
+
+			newPool := pool.DeepCopy()
+
+			// Set the source because we have it
+			pool.Spec.Configuration.Source = source
+
+			// If the pool is already on this config, make sure the guts of this config are the same because someone could have changed it
+			if pool.Spec.Configuration.Name == spliced.Name {
+				glog.Infof("Pool was already on config, reapplying")
+				_, _, err = mcoResourceApply.ApplyMachineConfig(ctrl.client.MachineconfigurationV1(), spliced)
+				if err != nil {
+					return err
+				}
+
+				// And then if we applied it, update the pool with it and return
+				_, err = ctrl.client.MachineconfigurationV1().MachineConfigPools().Update(context.TODO(), newPool, metav1.UpdateOptions{})
+				return err
+			}
+
+			// If we make it here, we need to move to this config
+			newPool.Spec.Configuration.Name = spliced.Name
+			// TODO(walters) Use subresource or JSON patch, but the latter isn't supported by the unit test mocks
+			pool, err = ctrl.client.MachineconfigurationV1().MachineConfigPools().Update(context.TODO(), newPool, metav1.UpdateOptions{})
+			if err != nil {
+				return err
+			}
+			glog.V(2).Infof("Pool %s: now targeting: %s", pool.Name, pool.Spec.Configuration.Name)
+
+			if err := ctrl.garbageCollectRenderedConfigs(pool); err != nil {
+				return err
+			}
+
+			return nil
+		}
+		// If we got here, we didn't need to splice, back to our usual rendering behavior
+	}
+
 	source := []corev1.ObjectReference{}
 	for _, cfg := range configs {
 		source = append(source, corev1.ObjectReference{Kind: machineconfigKind.Kind, Name: cfg.GetName(), APIVersion: machineconfigKind.GroupVersion().String()})
@@ -661,4 +717,164 @@ func getMachineConfigsForPool(pool *mcfgv1.MachineConfigPool, configs []*mcfgv1.
 		return nil, fmt.Errorf("couldn't find any MachineConfigs for pool: %v", pool.Name)
 	}
 	return out, nil
+}
+
+// parseConvertMachineConfigFilesForPool retrieves the current and pending configurations for
+// a pool, parses and converts them, and returns them as ignition v3 Config objects. The controller needs
+// to retrieve and examine the actual configurations so it can diff the file lists and figure out which new
+// files are "stuck" behind a paused pool.
+func (ctrl *Controller) parseConvertMachineConfigFilesForPool(pool *mcfgv1.MachineConfigPool) (current, pending *ign3types.Config, err error) {
+	// The config we're in right now
+	currentName := pool.Status.Configuration.Name
+	// The config we would be going to
+	pendingName := pool.Spec.Configuration.Name
+
+	// Get the machine config objects
+	currentConfig, err := ctrl.mcLister.Get(currentName)
+	if apierrors.IsNotFound(err) {
+		glog.V(2).Infof("MachineConfig %v has been deleted", currentName)
+		return nil, nil, err
+	}
+
+	pendingConfig, err := ctrl.mcLister.Get(pendingName)
+	if apierrors.IsNotFound(err) {
+		glog.V(2).Infof("MachineConfigPool %v has been deleted", pendingName)
+		return nil, nil, err
+	}
+
+	// Make sure we can coax the objects into ignitionv3
+	currentIgnConfig, err := ctrlcommon.ParseAndConvertConfig(currentConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	pendingIgnConfig, err := ctrlcommon.ParseAndConvertConfig(pendingConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &currentIgnConfig, &pendingIgnConfig, nil
+}
+
+// getNewestAPIToKubeletSignerCertificate returns the newest kube-apiserver-to-kubelet-signer
+// certificate present in the kubelet-ca.crt bundle. We extract the certificate so we can use its
+// expiry date in our metrics/alerting. It's a very important certificate and its expiry will cause
+// nodes using it to cease communicating with the cluster.
+func (ctrl *Controller) getNewestAPIToKubeletSignerCertificate(statusIgnConfig *ign3types.Config) (*x509.Certificate, error) {
+	// Retrieve the file data from ignition
+	kubeletBundle, err := ctrlcommon.GetIgnitionFileDataByPath(statusIgnConfig, kubeletCAFilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse that bundle into its component certificates
+	containedCertificates, err := ctrlcommon.GetCertificatesFromPEMBundle(kubeletBundle)
+	if err != nil {
+		return nil, err
+	}
+
+	// We have other problems if this is empty, but it's possible
+	if len(containedCertificates) == 0 {
+		return nil, fmt.Errorf("No certificates found in bundle")
+	}
+
+	// The *original* signer has a different name, the rotated ones have longer names
+	// The suffix changes with the timstamp on rotation, which is why I'm using prefix here not exact match
+	newestCertificate := ctrlcommon.GetLongestValidCertificate(containedCertificates, kubeAPIToKubeletSignerNamePrefixes)
+
+	// Shouldn't come back with nothing, but just in case we do
+	if newestCertificate == nil {
+		return nil, fmt.Errorf("No matching kube-apiserver-to-kubelet-signer certificates found in bundle")
+	}
+
+	return newestCertificate, nil
+}
+
+func (ctrl *Controller) generateSplicedMachineConfig(pool *mcfgv1.MachineConfigPool, generated *mcfgv1.MachineConfig, cconfig *mcfgv1.ControllerConfig) (*mcfgv1.MachineConfig, []corev1.ObjectReference, error) {
+	var sneakFiles = map[string]bool{
+		"/etc/kubernetes/kubelet-ca.crt": true,
+	}
+
+	currentName := pool.Status.Configuration.Name
+	pendingName := pool.Spec.Configuration.Name
+
+	currentConfig, err := ctrl.mcLister.Get(currentName)
+	if apierrors.IsNotFound(err) {
+		glog.V(2).Infof("MachineConfig %v has been deleted", currentName)
+		return nil, nil, err
+	}
+
+	pendingConfig := generated
+	// Make sure we can coax the objects into ignitionv3
+	currentIgnConfig, err := ctrlcommon.ParseAndConvertConfig(currentConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pendingIgnConfig, err := ctrlcommon.ParseAndConvertConfig(pendingConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Figure out what files differ between pool.Spec and pool.Status
+	fileDiff := ctrlcommon.CalculateConfigFileDiffs(&currentIgnConfig, &pendingIgnConfig)
+
+	glog.Infof("Diffed between %s and %s for pool %s: %s", currentName, pendingName, pool.Name, fileDiff)
+	var sneak bool
+	// Go through our files until we hit the kubelet CA bundle
+	for _, path := range fileDiff {
+		// We only care about the kubelet CA bundle
+		if _, ok := sneakFiles[path]; ok {
+			glog.Infof("Need to splice %s into %s", path, currentName)
+			sneak = true
+		}
+	}
+
+	if !sneak {
+		glog.Infof("Nothing to sneak in, diff was: %s", fileDiff)
+		return nil, nil, nil
+	}
+
+	source := []corev1.ObjectReference{}
+	ignConfig := ctrlcommon.NewIgnConfig()
+
+	for num, f := range pendingIgnConfig.Storage.Files {
+		if _, ok := sneakFiles[f.Path]; ok {
+			// TODO(jkyros): Setting the source stuff here is probably terrible, I just wanted to see what it would oook lik e
+			source = append(source, corev1.ObjectReference{Name: f.Path})
+			ignConfig.Storage.Files = append(ignConfig.Storage.Files, pendingIgnConfig.Storage.Files[num])
+		}
+	}
+
+	mc, err := ctrlcommon.MachineConfigFromIgnConfig(pool.Name, "", ignConfig)
+	if err != nil {
+		glog.Warningf("Could not create machineconfig for entitlements: %s", err)
+	}
+
+	spliced, err := generateRenderedMachineConfig(pool, []*mcfgv1.MachineConfig{currentConfig, mc}, cconfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if spliced.Annotations == nil {
+		spliced.Annotations = map[string]string{}
+	}
+	spliced.Annotations["machineconfiguration.openshift.io/can-bypass-pause"] = "true"
+
+	spliced.SetName(strings.Replace(spliced.Name, "rendered-", "spliced-", 1))
+
+	glog.Infof("Generated spliced machine config %s for pool %s", spliced.Name, pool.Name)
+
+	alreadySpliced, err := ctrl.mcLister.Get(spliced.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Make the config, it didn't exist
+			spliced, err := ctrl.client.MachineconfigurationV1().MachineConfigs().Create(context.TODO(), spliced, metav1.CreateOptions{})
+			return spliced, source, err
+		}
+		// Something else bad happened
+		return nil, nil, err
+	}
+
+	// Already existed, just keep going
+	return alreadySpliced, source, nil
 }
