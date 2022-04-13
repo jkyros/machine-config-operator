@@ -783,8 +783,20 @@ func (ctrl *Controller) syncMachineConfigPool(key string) error {
 		// Only check for pending files if we're out of sync
 		if pool.Spec.Configuration.Name != pool.Status.Configuration.Name {
 			ctrl.setPendingFileMetrics(pool)
+
+			desiredConfig, err := ctrl.mcLister.Get(pool.Spec.Configuration.Name)
+			if err != nil {
+				return err
+			}
+
+			_, canBypassPause := desiredConfig.Annotations["machineconfiguration.openshift.io/can-bypass-pause"]
+
+			if !canBypassPause {
+				return ctrl.syncStatusOnly(pool)
+			} else {
+				glog.Infof("I lied, this config is important, I'm letting it sneak through")
+			}
 		}
-		return ctrl.syncStatusOnly(pool)
 	}
 
 	// We aren't paused anymore, so reset the metrics
