@@ -795,7 +795,6 @@ func (ctrl *Controller) generateSplicedMachineConfig(pool *mcfgv1.MachineConfigP
 	}
 
 	currentName := pool.Status.Configuration.Name
-	pendingName := pool.Spec.Configuration.Name
 
 	currentConfig, err := ctrl.mcLister.Get(currentName)
 	if apierrors.IsNotFound(err) {
@@ -803,14 +802,13 @@ func (ctrl *Controller) generateSplicedMachineConfig(pool *mcfgv1.MachineConfigP
 		return nil, nil, err
 	}
 
-	pendingConfig := generated
 	// Make sure we can coax the objects into ignitionv3
 	currentIgnConfig, err := ctrlcommon.ParseAndConvertConfig(currentConfig.Spec.Config.Raw)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	pendingIgnConfig, err := ctrlcommon.ParseAndConvertConfig(pendingConfig.Spec.Config.Raw)
+	pendingIgnConfig, err := ctrlcommon.ParseAndConvertConfig(generated.Spec.Config.Raw)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -818,7 +816,7 @@ func (ctrl *Controller) generateSplicedMachineConfig(pool *mcfgv1.MachineConfigP
 	// Figure out what files differ between pool.Spec and pool.Status
 	fileDiff := ctrlcommon.CalculateConfigFileDiffs(&currentIgnConfig, &pendingIgnConfig)
 
-	glog.Infof("Diffed between %s and %s for pool %s: %s", currentName, pendingName, pool.Name, fileDiff)
+	glog.Infof("Diffed between %s and %s for pool %s: %s", currentName, generated.Name, pool.Name, fileDiff)
 	var sneak bool
 	// Go through our files until we hit the kubelet CA bundle
 	for _, path := range fileDiff {
