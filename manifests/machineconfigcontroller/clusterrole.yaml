@@ -53,5 +53,5 @@ rules:
   resources: ["buildconfigs","buildconfigs/instantiate"]
   verbs: ["*"]
 - apiGroups: ["image.openshift.io"]
-  resources: ["imagestreams","images"]
-  verbs: ["*"]
+  resources: ["images"]
+  verbs: ["get","list","watch","create","update","patch","delete"]
