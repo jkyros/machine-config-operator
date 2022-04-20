@@ -55,6 +55,7 @@ var (
 )
 
 type manifestPaths struct {
+	roles               []string
 	clusterRoles        []string
 	roleBindings        []string
 	clusterRoleBindings []string
@@ -65,13 +66,15 @@ type manifestPaths struct {
 
 const (
 	// Machine Config Controller manifest paths
-	mccClusterRoleManifestPath              = "manifests/machineconfigcontroller/clusterrole.yaml"
-	mccEventsClusterRoleManifestPath        = "manifests/machineconfigcontroller/events-clusterrole.yaml"
-	mccEventsRoleBindingDefaultManifestPath = "manifests/machineconfigcontroller/events-rolebinding-default.yaml"
-	mccEventsRoleBindingTargetManifestPath  = "manifests/machineconfigcontroller/events-rolebinding-target.yaml"
-	mccClusterRoleBindingManifestPath       = "manifests/machineconfigcontroller/clusterrolebinding.yaml"
-	mccRegistryRoleBindingManifestPath      = "manifests/machineconfigcontroller/registry-rolebinding.yaml"
-	mccServiceAccountManifestPath           = "manifests/machineconfigcontroller/sa.yaml"
+	mccClusterRoleManifestPath                = "manifests/machineconfigcontroller/clusterrole.yaml"
+	mccEventsClusterRoleManifestPath          = "manifests/machineconfigcontroller/events-clusterrole.yaml"
+	mccEventsRoleBindingDefaultManifestPath   = "manifests/machineconfigcontroller/events-rolebinding-default.yaml"
+	mccEventsRoleBindingTargetManifestPath    = "manifests/machineconfigcontroller/events-rolebinding-target.yaml"
+	mccClusterRoleBindingManifestPath         = "manifests/machineconfigcontroller/clusterrolebinding.yaml"
+	mccRegistryRoleBindingManifestPath        = "manifests/machineconfigcontroller/registry-rolebinding.yaml"
+	mccBuildControllerRoleBindingManifestPath = "manifests/machineconfigcontroller/buildcontroller-rolebinding.yaml"
+	mccLocalNamespaceRoleManifestPath         = "manifests/machineconfigcontroller/localnamespacerole.yaml"
+	mccServiceAccountManifestPath             = "manifests/machineconfigcontroller/sa.yaml"
 
 	// Machine Config Daemon manifest paths
 	mcdClusterRoleManifestPath              = "manifests/machineconfigdaemon/clusterrole.yaml"
@@ -452,6 +455,18 @@ func (optr *Operator) syncMachineConfigPools(config *renderConfig) error {
 }
 
 func (optr *Operator) applyManifests(config *renderConfig, paths manifestPaths) error {
+	for _, path := range paths.roles {
+		rBytes, err := renderAsset(config, path)
+		if err != nil {
+			return err
+		}
+		r := resourceread.ReadRoleV1OrDie(rBytes)
+		_, _, err = resourceapply.ApplyRole(context.TODO(), optr.kubeClient.RbacV1(), optr.libgoRecorder, r)
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, path := range paths.clusterRoles {
 		crBytes, err := renderAsset(config, path)
 		if err != nil {
@@ -532,6 +547,9 @@ func (optr *Operator) applyManifests(config *renderConfig, paths manifestPaths) 
 
 func (optr *Operator) syncMachineConfigController(config *renderConfig) error {
 	paths := manifestPaths{
+		roles: []string{
+			mccLocalNamespaceRoleManifestPath,
+		},
 		clusterRoles: []string{
 			mccClusterRoleManifestPath,
 			mccEventsClusterRoleManifestPath,
@@ -540,6 +558,7 @@ func (optr *Operator) syncMachineConfigController(config *renderConfig) error {
 			mccEventsRoleBindingDefaultManifestPath,
 			mccEventsRoleBindingTargetManifestPath,
 			mccRegistryRoleBindingManifestPath,
+			mccBuildControllerRoleBindingManifestPath,
 		},
 		clusterRoleBindings: []string{
 			mccClusterRoleBindingManifestPath,

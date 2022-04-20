@@ -42,3 +42,6 @@ rules:
 - apiGroups: [""]
   resources: ["secrets","serviceaccounts"]
   verbs: ["get"] 
+- apiGroups: ["image.openshift.io"]
+  resources: ["images"]
+  verbs: ["get","list","watch"]
