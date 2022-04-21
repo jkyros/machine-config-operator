@@ -778,10 +778,13 @@ github.com/openshift/api/user/v1
 # github.com/openshift/client-go v0.0.0-20220504114320-6aec01bb0754
 ## explicit; go 1.16
 github.com/openshift/client-go/build/clientset/versioned
-github.com/openshift/client-go/build/clientset/versioned/fake
 github.com/openshift/client-go/build/clientset/versioned/scheme
 github.com/openshift/client-go/build/clientset/versioned/typed/build/v1
-github.com/openshift/client-go/build/clientset/versioned/typed/build/v1/fake
+github.com/openshift/client-go/build/informers/externalversions
+github.com/openshift/client-go/build/informers/externalversions/build
+github.com/openshift/client-go/build/informers/externalversions/build/v1
+github.com/openshift/client-go/build/informers/externalversions/internalinterfaces
+github.com/openshift/client-go/build/listers/build/v1
 github.com/openshift/client-go/config/clientset/versioned
 github.com/openshift/client-go/config/clientset/versioned/fake
 github.com/openshift/client-go/config/clientset/versioned/scheme
