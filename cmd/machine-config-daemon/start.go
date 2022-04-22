@@ -200,6 +200,8 @@ func runStartCmd(cmd *cobra.Command, args []string) {
 		glog.Fatalf("Cannot initialize kubeClient: %v", err)
 	}
 
+	imageClient := cb.ImageClientOrDie(componentName)
+
 	// This channel is used to ensure all spawned goroutines exit when we exit.
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -237,8 +239,8 @@ func runStartCmd(cmd *cobra.Command, args []string) {
 	err = dn.ClusterConnect(
 		startOpts.nodeName,
 		kubeClient,
+		imageClient,
 		ctx.InformerFactory.Machineconfiguration().V1().MachineConfigs(),
-		ctx.ImageNamespacedInformerFactory.Image().V1().Images(),
 		ctx.KubeInformerFactory.Core().V1().Nodes(),
 		startOpts.kubeletHealthzEnabled,
 		startOpts.kubeletHealthzEndpoint,

@@ -42,6 +42,7 @@ type response struct {
 // message wraps a client and responseChannel
 type message struct {
 	annos           map[string]string
+	removeannos     map[string]string
 	responseChannel chan response
 }
 
@@ -133,7 +134,7 @@ func (nw *clusterNodeWriter) Run(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case msg := <-nw.writer:
-			r := implSetNodeAnnotations(nw.client, nw.lister, nw.nodeName, msg.annos)
+			r := implSetNodeAnnotations(nw.client, nw.lister, nw.nodeName, msg.annos, msg.removeannos)
 			msg.responseChannel <- r
 		}
 	}
@@ -147,10 +148,17 @@ func (nw *clusterNodeWriter) SetLayeredDone(diAnnotation string) error {
 		// clear out any Degraded/Unreconcilable reason
 		constants.MachineConfigDaemonReasonAnnotationKey: "",
 	}
+
+	// Clean up the machineconfig annotations so there isn't conflict with other code paths
+	removeannos := map[string]string{
+		constants.CurrentMachineConfigAnnotationKey: "",
+		constants.DesiredMachineConfigAnnotationKey: "",
+	}
 	MCDState.WithLabelValues(constants.MachineConfigDaemonStateDone, "").SetToCurrentTime()
 	respChan := make(chan response, 1)
 	nw.writer <- message{
 		annos:           annos,
+		removeannos:     removeannos,
 		responseChannel: respChan,
 	}
 	r := <-respChan
@@ -282,10 +290,13 @@ func (nw *clusterNodeWriter) Eventf(eventtype, reason, messageFmt string, args .
 	nw.recorder.Eventf(getNodeRef(nw.node), eventtype, reason, messageFmt, args...)
 }
 
-func implSetNodeAnnotations(client corev1client.NodeInterface, lister corev1lister.NodeLister, nodeName string, m map[string]string) response {
+func implSetNodeAnnotations(client corev1client.NodeInterface, lister corev1lister.NodeLister, nodeName string, add map[string]string, remove map[string]string) response {
 	node, err := internal.UpdateNodeRetry(client, lister, nodeName, func(node *corev1.Node) {
-		for k, v := range m {
+		for k, v := range add {
 			node.Annotations[k] = v
+		}
+		for k := range remove {
+			delete(node.Annotations, k)
 		}
 	})
 	return response{
