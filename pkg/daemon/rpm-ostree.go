@@ -437,6 +437,22 @@ func runGetOut(command string, args ...string) ([]byte, error) {
 	return rawOut, nil
 }
 
+// runGetOut executes a command, logging it, and return the stdout output.
+func runGetCombined(command string, args ...string) ([]byte, error) {
+	glog.Infof("Running captured: %s %s", command, strings.Join(args, " "))
+	cmd := exec.Command(command, args...)
+	rawOut, err := cmd.CombinedOutput()
+	if err != nil {
+		errtext := ""
+		if e, ok := err.(*exec.ExitError); ok {
+			// Trim to max of 256 characters
+			errtext = fmt.Sprintf("\n%s", truncate(string(e.Stderr), 256))
+		}
+		return nil, fmt.Errorf("error running %s %s: %s%s", command, strings.Join(args, " "), err, errtext)
+	}
+	return rawOut, nil
+}
+
 // TODO deduplicate with RpmOstreeDeployment
 type Deployment struct {
 	RequestedLocalPackages []interface{} `json:"requested-local-packages"`

@@ -2061,10 +2061,15 @@ func (dn *CoreOSDaemon) experimentalUpdateLayeredConfig() error {
 			// since we reboot whenever kargs change, we can get old kargs from live-applied or booted
 			oldContentBytes, err := Cat(booted.Osname, booted.Checksum, render.MCDContentPath)
 			if err != nil {
+				// TODO(jkyros): Our initial (non-container) image doesn't have this, so we degrade. Then when the node requeues, we already rebased
+				// so we dont't hit "needRebase" again, which means we skip this whole part the second time though, which I think means
+				// the kernel args don't get updated that first time through, which is probably bad.
+				glog.Errorf("Failed to get booted content for %s:%s:%s: %s", booted.Osname, booted.Checksum, render.MCDContentPath, err)
 				return err
 			}
 			newContentBytes, err := Cat(staged.Osname, staged.Checksum, render.MCDContentPath)
 			if err != nil {
+				glog.Errorf("Failed to get staged content for %s:%s:%s: %s", booted.Osname, booted.Checksum, render.MCDContentPath, err)
 				return err
 			}
 			var oldContent, newContent render.MCDContent
@@ -2122,19 +2127,21 @@ func (dn *CoreOSDaemon) experimentalUpdateLayeredConfig() error {
 			// I write this in the image build now, so config checker still works AND I don't get stuck on it
 			os.Remove(dn.currentConfigPath)
 
-			// TODO(jkyros): This is a hack until we figure out file "owners"/layers/precedence
-			// When you add files to an image (like we with ignition-liveapply), they get stuffed into /usr/etc/, so they are
-			// essentially "default files"
-			// This defaults the files we added to /etc/ so we know the 3-way merge will update them with the container versions from machineconfig
-			_, err = runGetOut("rsync", "-avh", "/usr/etc/", "/etc/")
-			if err != nil {
-				return err
-			}
-
 			// Check and perform node drain if required
 			if err := dn.drainIfRequired(actions, diffFileSet, getOstreeFileDataReadFunc(booted.Osname, activeChecksum), getOstreeFileDataReadFunc(staged.Osname, staged.Checksum)); err != nil {
 				return err
 			}
+
+			// TODO(jkyros): This is a hack until we figure out file "owners"/layers/precedence
+			// When you add files to an image (like we with ignition-liveapply), they get stuffed into /usr/etc/, so they are
+			// essentially "default files"
+			// This defaults the files we added to /etc/ so we know the 3-way merge will update them with the container versions from machineconfig
+			// @jkyros moved this after the drain because drain was having issues sometimes, he doesn't fully understand why yet
+			_, err = runGetCombined("rsync", "-avh", "/usr/etc/", "/etc/")
+			if err != nil {
+				return err
+			}
+
 			// For now we always live apply so our config is functional again after we "defaulted it" above
 			// TODO(jkyros): This seems like it might be dangerous because if the first apply-live fails, it looks like you're stranded and it won't
 			// perform the '3 way merge' from scratch again after it sets its checkpoint
