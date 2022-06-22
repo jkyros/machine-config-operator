@@ -26,3 +26,6 @@ rules:
   - subjectaccessreviews
   verbs:
   - create
+- apiGroups: [""]
+  resources: ["secrets","serviceaccounts"]
+  verbs: ["get"] 
