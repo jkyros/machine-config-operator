@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/machine-config-operator/pkg/constants"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -778,7 +780,7 @@ func TestSetDesiredMachineConfigAnnotation(t *testing.T) {
 
 			c := f.newController()
 
-			err := c.setDesiredMachineConfigAnnotation(test.node.Name, "v1")
+			err := c.setNodeAnnotation(test.node.Name, daemonconsts.DesiredMachineConfigAnnotationKey, "v1")
 			if !assert.Nil(t, err) {
 				return
 			}

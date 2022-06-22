@@ -789,6 +789,14 @@ func (ctrl *Controller) syncMachineConfigPool(key string) error {
 	// We aren't paused anymore, so reset the metrics
 	ctrl.resetPendingFileMetrics(pool)
 
+	// Check to see if this is a layered, pool, and if it is, wait for the image that matches our desiredConfig to render
+	// If our image isn't cooked yet, don't do anything, the pool will get requeued when it's done
+	targetImage, equivalentTo, isImagePool, targetImageMatchesConfig := ctrl.experimentalHasValidImage(pool)
+	if isImagePool && !targetImageMatchesConfig {
+		glog.Infof("Target image %s (%s) does not match target config %s. Skipping pool %s for now.", targetImage, equivalentTo, pool.Spec.Configuration.Name, pool.Name)
+		return ctrl.syncStatusOnly(pool)
+	}
+
 	nodes, err := ctrl.getNodesForPool(pool)
 	if err != nil {
 		if syncErr := ctrl.syncStatusOnly(pool); syncErr != nil {
@@ -917,7 +925,9 @@ func (ctrl *Controller) setClusterConfigAnnotation(nodes []*corev1.Node) error {
 	return nil
 }
 
-func (ctrl *Controller) setDesiredMachineConfigAnnotation(nodeName, currentConfig string) error {
+// setNodeAnnotation sets an annotation to a node using a strategic patch that takes into account the annotations that were already there.
+// It does not replace the whole annotation list, it just merges the new annotations into the existing list.
+func (ctrl *Controller) setNodeAnnotation(nodeName, annotation, annotationValue string) error {
 	return clientretry.RetryOnConflict(constants.NodeUpdateBackoff, func() error {
 		oldNode, err := ctrl.kubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 		if err != nil {
@@ -933,10 +943,10 @@ func (ctrl *Controller) setDesiredMachineConfigAnnotation(nodeName, currentConfi
 			newNode.Annotations = map[string]string{}
 		}
 
-		if newNode.Annotations[daemonconsts.DesiredMachineConfigAnnotationKey] == currentConfig {
+		if newNode.Annotations[annotation] == annotationValue {
 			return nil
 		}
-		newNode.Annotations[daemonconsts.DesiredMachineConfigAnnotationKey] = currentConfig
+		newNode.Annotations[annotation] = annotationValue
 		newData, err := json.Marshal(newNode)
 		if err != nil {
 			return err
@@ -1042,10 +1052,30 @@ func (ctrl *Controller) updateCandidateMachines(pool *mcfgv1.MachineConfigPool, 
 	}
 	targetConfig := pool.Spec.Configuration.Name
 	for _, node := range candidates {
+
+		// Check image details for this pool
+		targetImage, equivalentTo, isImagePool, targetImageMatchesConfig := ctrl.experimentalHasValidImage(pool)
+
+		// If our pool is annotated with an image AND that image is the right image, then update these nodes with it
+		// TODO(jkyros): this does not obviate the desiredConfig annotation below for now, as we're using "are we in our desired machineconfig"
+		// as our "done" signal
+		if isImagePool {
+			if targetImageMatchesConfig {
+				ctrl.logPool(pool, "Setting node %s target image to %s", node.Name, targetImage)
+				if err := ctrl.setNodeAnnotation(node.Name, daemonconsts.DesiredImageConfigAnnotationKey, targetImage); err != nil {
+					return fmt.Errorf("setting desired config for node %s: %w", node.Name, err)
+				}
+			} else {
+				glog.Infof("Image %s matched %s not %s. Proper image may not have rendered yet", targetImage, equivalentTo, targetConfig)
+			}
+
+		}
+
 		ctrl.logPool(pool, "Setting node %s target to %s", node.Name, targetConfig)
-		if err := ctrl.setDesiredMachineConfigAnnotation(node.Name, targetConfig); err != nil {
+		if err := ctrl.setNodeAnnotation(node.Name, daemonconsts.DesiredMachineConfigAnnotationKey, targetConfig); err != nil {
 			return fmt.Errorf("setting desired config for node %s: %w", node.Name, err)
 		}
+
 	}
 	if len(candidates) == 1 {
 		candidate := candidates[0]
@@ -1286,4 +1316,30 @@ func (ctrl *Controller) getNewestAPIToKubeletSignerCertificate(statusIgnConfig *
 	}
 
 	return newestCertificate, nil
+}
+
+// experimentalHasValidImage is what makes node_controller wait for an image to render for a "layered" pool. Checks the state of the pool annotations assigned by render_controller to see if our image is done rendering
+// and it's the proper image to apply to this pool. This is used to make sure we don't assign a config to a node too early and have it take the non-image
+// path because all it got was a machineconfig.
+func (ctrl *Controller) experimentalHasValidImage(pool *mcfgv1.MachineConfigPool) (targetImage, equivalentTo string, isLayeredPool, targetImageMatchesConfig bool) {
+
+	var hasTargetImage bool
+	// The image that's currently the latest in the image stream
+	targetImage, hasTargetImage = pool.Annotations[ctrlcommon.ExperimentalNewestLayeredImageAnnotationKey]
+	// Which machineconfig it's "equivalent" to
+	equivalentTo, hasEquivalentTo := pool.Annotations[ctrlcommon.ExperimentalNewestLayeredImageEquivalentConfigAnnotationKey]
+
+	// TODO(jkyros): Flag or something later, this is just for now
+	isLayeredPool = ctrlcommon.IsLayeredPool(pool)
+
+	// If it has these, we know it's cooked at least one image, but it might be the previous one, and
+	// the new one might still be rendering
+	if hasTargetImage && hasEquivalentTo {
+		// But if it matches our machineconfig, we know it's the right one
+		if equivalentTo == pool.Spec.Configuration.Name {
+			targetImageMatchesConfig = true
+		}
+	}
+	return
+
 }
