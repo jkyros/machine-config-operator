@@ -9,7 +9,6 @@ import (
 	ign3types "github.com/coreos/ignition/v2/config/v3_2/types"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 	ctrlcommon "github.com/openshift/machine-config-operator/pkg/controller/common"
-	"github.com/openshift/machine-config-operator/test/helpers"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -53,7 +52,7 @@ func TestMachineConfigToIgnition(t *testing.T) {
 	// expected content
 	defaultMCDContent, err := json.Marshal(MCDContent{})
 	require.Nil(t, err)
-	defaultMCDContentFile := helpers.NewIgnFile(MCDContentPath, string(defaultMCDContent))
+	defaultMCDContentFile := ctrlcommon.NewIgnFile(MCDContentPath, string(defaultMCDContent))
 	defaultExpectedIgnition := defaultInputIgnition
 	defaultExpectedIgnition.Storage.Files = append(defaultExpectedIgnition.Storage.Files, defaultMCDContentFile)
 
@@ -132,7 +131,7 @@ override-remove:
 	})
 
 	// test KernelArguments
-	mcdContentFile := helpers.NewIgnFile(MCDContentPath, `{"kernelArguments":["hugepagesz=1G","hugepages=4"],"fips":false}`)
+	mcdContentFile := ctrlcommon.NewIgnFile(MCDContentPath, `{"kernelArguments":["hugepagesz=1G","hugepages=4"],"fips":false}`)
 	testCases = append(testCases, machineConfigToIgnitionTestCase{
 		name: "test KernelArguments",
 		spec: mcfgv1.MachineConfigSpec{
@@ -150,7 +149,7 @@ override-remove:
 	})
 
 	// test FIPS
-	mcdContentFile = helpers.NewIgnFile(MCDContentPath, `{"kernelArguments":null,"fips":true}`)
+	mcdContentFile = ctrlcommon.NewIgnFile(MCDContentPath, `{"kernelArguments":null,"fips":true}`)
 	testCases = append(testCases, machineConfigToIgnitionTestCase{
 		name: "test FIPS",
 		spec: mcfgv1.MachineConfigSpec{

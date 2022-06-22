@@ -11,7 +11,6 @@ import (
 	ign3types "github.com/coreos/ignition/v2/config/v3_2/types"
 	mcSpecv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 	ctrlcommon "github.com/openshift/machine-config-operator/pkg/controller/common"
-	"github.com/openshift/machine-config-operator/test/helpers"
 
 	"gopkg.in/yaml.v3"
 )
@@ -71,7 +70,7 @@ func MachineConfigToIgnition(mcSpec *mcSpecv1.MachineConfigSpec) (ign3types.Conf
 	if err != nil {
 		return ign3types.Config{}, fmt.Errorf("couldn't marshal MCD content: %w", err)
 	}
-	ignition.Storage.Files = append(ignition.Storage.Files, helpers.NewIgnFile(MCDContentPath, string(mcdContent)))
+	ignition.Storage.Files = append(ignition.Storage.Files, ctrlcommon.NewIgnFile(MCDContentPath, string(mcdContent)))
 
 	return ignition, nil
 }
