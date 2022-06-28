@@ -125,6 +125,12 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, osImageURL string) (*m
 		}
 	}
 
+	// TODO(jkyros): we need the one that's the last in the list to win, mabye only if it's populated?
+	externalLayeredImage := ""
+	for _, cfg := range configs {
+		externalLayeredImage = cfg.Spec.ExternalLayeredImage
+	}
+
 	return &mcfgv1.MachineConfig{
 		Spec: mcfgv1.MachineConfigSpec{
 			OSImageURL:      osImageURL,
@@ -132,9 +138,10 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, osImageURL string) (*m
 			Config: runtime.RawExtension{
 				Raw: rawOutIgn,
 			},
-			FIPS:       fips,
-			KernelType: kernelType,
-			Extensions: extensions,
+			FIPS:                 fips,
+			KernelType:           kernelType,
+			Extensions:           extensions,
+			ExternalLayeredImage: externalLayeredImage,
 		},
 	}, nil
 }

@@ -346,7 +346,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 			// TODO(jkyros): Layered equivalent of UpdateOS
 			// TODO(jkyros): externalImageUpdate
 			// TODO(jkyros)
-			newURL := newConfig.Spec.OSImageURL
+			newURL := newConfig.Spec.ExternalLayeredImage
 			glog.Infof("Updating OS to layered image %s", newURL)
 			client := NewNodeUpdaterClient()
 			if err := client.RebaseLayered(newURL); err != nil {

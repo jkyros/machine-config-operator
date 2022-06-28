@@ -1403,7 +1403,7 @@ func (dn *Daemon) checkStateOnFirstRun() error {
 	// Bootstrapping state is when we have the node annotations file
 	if state.bootstrapping {
 		targetOSImageURL := state.currentConfig.Spec.OSImageURL
-		osMatch := dn.checkOS(targetOSImageURL)
+		osMatch := dn.checkOS(state.currentConfig)
 		if !osMatch {
 			glog.Infof("Bootstrap pivot required to: %s", targetOSImageURL)
 			// This only returns on error
@@ -1770,7 +1770,7 @@ func (dn *CoreOSDaemon) validateKernelArguments(currentConfig *mcfgv1.MachineCon
 // degraded.
 func (dn *Daemon) validateOnDiskState(currentConfig *mcfgv1.MachineConfig) error {
 	// Be sure we're booted into the OS we expect
-	osMatch := dn.checkOS(currentConfig.Spec.OSImageURL)
+	osMatch := dn.checkOS(currentConfig)
 	if !osMatch {
 		return fmt.Errorf("expected target osImageURL %q, have %q", currentConfig.Spec.OSImageURL, dn.bootedOSImageURL)
 	}
@@ -1791,14 +1791,15 @@ func (dn *Daemon) validateOnDiskState(currentConfig *mcfgv1.MachineConfig) error
 // not running RHCOS or FCOS, or if the target osImageURL is "" (unspecified),
 // or if the digests match.
 // Otherwise if `false` is returned, then we need to perform an update.
-func (dn *Daemon) checkOS(osImageURL string) bool {
+func (dn *Daemon) checkOS(currentConfig *mcfgv1.MachineConfig) bool {
 	// Nothing to do if we're not on RHCOS or FCOS
 	if !dn.os.IsCoreOSVariant() {
-		glog.Infof(`Not booted into a CoreOS variant, ignoring target OSImageURL %s`, osImageURL)
+		glog.Infof(`Not booted into a CoreOS variant, ignoring target OSImageURL %s`, currentConfig.Spec.OSImageURL)
 		return true
 	}
 
-	return dn.bootedOSImageURL == osImageURL
+	// The extenral layered image takes precedence, but if we don't have one, fall back to
+	return dn.bootedOSImageURL == currentConfig.Spec.ExternalLayeredImage || dn.bootedOSImageURL == currentConfig.Spec.OSImageURL
 }
 
 // Close closes all the connections the node agent has open for it's lifetime
