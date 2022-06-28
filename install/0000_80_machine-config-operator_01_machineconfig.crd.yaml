@@ -339,3 +339,6 @@ spec:
                 description: OSImageURL specifies the remote location that will be used
                   to fetch the OS
                 type: string
+              externalLayeredImage:
+                description: externalLayeredImage specifies an external layered image that will override OSImageURL
+                type: string

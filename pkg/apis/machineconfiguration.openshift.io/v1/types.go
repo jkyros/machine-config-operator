@@ -196,6 +196,10 @@ type MachineConfigSpec struct {
 	// fetch the OS.
 	OSImageURL string `json:"osImageURL"`
 	// Config is a Ignition Config object.
+
+	// layeredImage is an image in the new "layered" format
+	ExternalLayeredImage string `json:"externalLayeredImage"`
+
 	Config runtime.RawExtension `json:"config"`
 
 	// +nullable

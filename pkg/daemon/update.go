@@ -336,6 +336,77 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpdateStarted", mcDiff.osChangesString())
 	}
 
+	if newConfig.Spec.ExternalLayeredImage != "" {
+		if mcDiff.externalImageUpdate {
+			// The logic needs to be like:
+			// 1. if we're on an externalLayeredImage, then do the layered way
+			// 2. if not, do it the non-layered way
+			// 3. default to the externalLayeredImage if we have it
+			// TODO(jkyros): Joseph's extensions repo
+			// TODO(jkyros): Layered equivalent of UpdateOS
+			// TODO(jkyros): externalImageUpdate
+			// TODO(jkyros)
+			newURL := newConfig.Spec.OSImageURL
+			glog.Infof("Updating OS to layered image %s", newURL)
+			client := NewNodeUpdaterClient()
+			if err := client.RebaseLayered(newURL); err != nil {
+				nodeName := ""
+				if dn.node != nil {
+					nodeName = dn.node.Name
+				}
+				MCDPivotErr.WithLabelValues(nodeName, newConfig.Spec.ExternalLayeredImage, err.Error()).SetToCurrentTime()
+				return err
+			}
+			if dn.nodeWriter != nil {
+				dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
+			}
+		} else { //nolint:gocritic // The nil check for dn.nodeWriter has nothing to do with an OS update being unavailable.
+			// An OS upgrade is not available
+			if dn.nodeWriter != nil {
+				dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeSkipped", "OS upgrade skipped; new MachineConfig (%s) has same OS image (%s) as old MachineConfig (%s)", newConfig.Name, newConfig.Spec.OSImageURL, oldConfig.Name)
+			}
+		}
+
+		defer func() {
+			// Operations performed by rpm-ostree on the booted system are available
+			// as staged deployment. It gets applied only when we reboot the system.
+			// In case of an error during any rpm-ostree transaction, removing pending deployment
+			// should be sufficient to discard any applied changes.
+			if retErr != nil {
+				// Print out the error now so that if we fail to cleanup -p, we don't lose it.
+				glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
+				if err := removePendingDeployment(); err != nil {
+					errs := kubeErrs.NewAggregate([]error{err, retErr})
+					retErr = fmt.Errorf("error removing staged deployment: %w", errs)
+					return
+				}
+			}
+		}()
+
+		// Apply kargs
+		if mcDiff.kargs {
+			if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+				return err
+			}
+		}
+
+		// Switch to real time kernel
+		if err := dn.switchKernel(oldConfig, newConfig); err != nil {
+			return err
+		}
+
+		glog.Infof("Can't apply extensions, not supported yet")
+		// Apply extensions
+		/*if err := dn.applyExtensions(oldConfig, newConfig); err != nil {
+			return err
+		}*/
+
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpdateStaged", "Changes to OS staged")
+		}
+		return nil
+	}
+
 	var osImageContentDir string
 	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
 		// When we're going to apply an OS update, switch the block
@@ -356,6 +427,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		if dn.nodeWriter != nil {
 			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
 		}
+
 		var err error
 		if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
 			return err
@@ -694,14 +766,15 @@ func (dn *Daemon) updateHypershift(oldConfig, newConfig *mcfgv1.MachineConfig, d
 // and the MCO would just operate on that.  For now we're just doing this to get
 // improved logging.
 type machineConfigDiff struct {
-	osUpdate   bool
-	kargs      bool
-	fips       bool
-	passwd     bool
-	files      bool
-	units      bool
-	kernelType bool
-	extensions bool
+	osUpdate            bool
+	externalImageUpdate bool
+	kargs               bool
+	fips                bool
+	passwd              bool
+	files               bool
+	units               bool
+	kernelType          bool
+	extensions          bool
 }
 
 // isEmpty returns true if the machineConfigDiff has no changes, or
@@ -754,14 +827,15 @@ func newMachineConfigDiff(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineC
 	extensionsEmpty := len(oldConfig.Spec.Extensions) == 0 && len(newConfig.Spec.Extensions) == 0
 
 	return &machineConfigDiff{
-		osUpdate:   oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
-		kargs:      !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
-		fips:       oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
-		passwd:     !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
-		files:      !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
-		units:      !reflect.DeepEqual(oldIgn.Systemd.Units, newIgn.Systemd.Units),
-		kernelType: canonicalizeKernelType(oldConfig.Spec.KernelType) != canonicalizeKernelType(newConfig.Spec.KernelType),
-		extensions: !(extensionsEmpty || reflect.DeepEqual(oldConfig.Spec.Extensions, newConfig.Spec.Extensions)),
+		osUpdate:            oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
+		externalImageUpdate: oldConfig.Spec.ExternalLayeredImage != newConfig.Spec.ExternalLayeredImage,
+		kargs:               !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
+		fips:                oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
+		passwd:              !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
+		files:               !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
+		units:               !reflect.DeepEqual(oldIgn.Systemd.Units, newIgn.Systemd.Units),
+		kernelType:          canonicalizeKernelType(oldConfig.Spec.KernelType) != canonicalizeKernelType(newConfig.Spec.KernelType),
+		extensions:          !(extensionsEmpty || reflect.DeepEqual(oldConfig.Spec.Extensions, newConfig.Spec.Extensions)),
 	}, nil
 }
 

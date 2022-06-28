@@ -64,6 +64,8 @@ type NodeUpdaterClient interface {
 	GetStatus() (string, error)
 	GetBootedOSImageURL() (string, string, error)
 	Rebase(string, string) (bool, error)
+	RebaseLayered(string) error
+	IsBootableImage(string) (bool, error)
 	GetBootedDeployment() (*RpmOstreeDeployment, error)
 }
 
@@ -304,6 +306,29 @@ func (r *RpmOstreeClient) Rebase(imgURL, osImageContentDir string) (changed bool
 
 	changed = true
 	return
+}
+
+// IsBootableImage determines if the image is a bootable (new container formet) image, or a wrapper (old container format)
+func (r *RpmOstreeClient) IsBootableImage(imgURL string) (bool, error) {
+
+	if imageData, err := imageInspect(imgURL); err != nil {
+		return false, err
+	} else {
+
+		if isBootable, ok := imageData.Labels["ostree.bootable"]; ok {
+			return isBootable == "true", nil
+		}
+
+		return false, nil
+	}
+}
+
+// RebaseLayered rebases system or errors if already rebased
+func (r *RpmOstreeClient) RebaseLayered(imgURL string) (err error) {
+	glog.Infof("Executing rebase to %s", imgURL)
+	args := []string{"rebase", "--experimental", "ostree-unverified-registry:" + imgURL}
+
+	return runRpmOstree(args...)
 }
 
 // truncate a string using runes/codepoints as limits.
