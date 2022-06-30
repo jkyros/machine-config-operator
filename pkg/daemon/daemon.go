@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1770,6 +1771,7 @@ func (dn *CoreOSDaemon) validateKernelArguments(currentConfig *mcfgv1.MachineCon
 // degraded.
 func (dn *Daemon) validateOnDiskState(currentConfig *mcfgv1.MachineConfig) error {
 	// Be sure we're booted into the OS we expect
+	log.Printf("%s|%s|%s", currentConfig.Spec.OSImageURL, currentConfig.Spec.ExternalLayeredImage, dn.bootedOSImageURL)
 	osMatch := dn.checkOS(currentConfig)
 	if !osMatch {
 		return fmt.Errorf("expected target osImageURL %q, have %q", currentConfig.Spec.OSImageURL, dn.bootedOSImageURL)

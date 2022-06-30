@@ -31,15 +31,16 @@ type rpmOstreeState struct {
 
 // RpmOstreeDeployment represents a single deployment on a node
 type RpmOstreeDeployment struct {
-	ID           string   `json:"id"`
-	OSName       string   `json:"osname"`
-	Serial       int32    `json:"serial"`
-	Checksum     string   `json:"checksum"`
-	Version      string   `json:"version"`
-	Timestamp    uint64   `json:"timestamp"`
-	Booted       bool     `json:"booted"`
-	Origin       string   `json:"origin"`
-	CustomOrigin []string `json:"custom-origin"`
+	ID                      string   `json:"id"`
+	OSName                  string   `json:"osname"`
+	Serial                  int32    `json:"serial"`
+	Checksum                string   `json:"checksum"`
+	Version                 string   `json:"version"`
+	Timestamp               uint64   `json:"timestamp"`
+	Booted                  bool     `json:"booted"`
+	Origin                  string   `json:"origin"`
+	CustomOrigin            []string `json:"custom-origin"`
+	ContainerImageReference string   `json:"container-image-reference"`
 }
 
 // imageInspection is a public implementation of
@@ -178,6 +179,15 @@ func (r *RpmOstreeClient) GetBootedOSImageURL() (string, string, error) {
 	if len(bootedDeployment.CustomOrigin) > 0 {
 		if strings.HasPrefix(bootedDeployment.CustomOrigin[0], "pivot://") {
 			osImageURL = bootedDeployment.CustomOrigin[0][len("pivot://"):]
+		}
+	}
+
+	// we have container images now, make sure we can parse those too
+	if bootedDeployment.ContainerImageReference != "" {
+		// right now they start with "ostree-unverified-registry:", so scrape that off
+		tokens := strings.SplitN(bootedDeployment.ContainerImageReference, ":", 2)
+		if len(tokens) > 1 {
+			osImageURL = tokens[1]
 		}
 	}
 
