@@ -38,6 +38,8 @@ type RpmOstreeDeployment struct {
 	Version                 string   `json:"version"`
 	Timestamp               uint64   `json:"timestamp"`
 	Booted                  bool     `json:"booted"`
+	Staged                  bool     `json:"staged"`
+	LiveReplaced            string   `json:"live-replaced,omitempty"`
 	Origin                  string   `json:"origin"`
 	CustomOrigin            []string `json:"custom-origin"`
 	ContainerImageReference string   `json:"container-image-reference"`
@@ -67,7 +69,7 @@ type NodeUpdaterClient interface {
 	Rebase(string, string) (bool, error)
 	RebaseLayered(string) error
 	IsBootableImage(string) (bool, error)
-	GetBootedDeployment() (*RpmOstreeDeployment, error)
+	GetBootedAndStagedDeployment() (*RpmOstreeDeployment, *RpmOstreeDeployment, error)
 }
 
 // RpmOstreeClient provides all RpmOstree related methods in one structure.
@@ -139,20 +141,16 @@ func (r *RpmOstreeClient) Initialize() error {
 }
 
 // GetBootedDeployment returns the current deployment found
-func (r *RpmOstreeClient) GetBootedDeployment() (*RpmOstreeDeployment, error) {
+func (r *RpmOstreeClient) GetBootedAndStagedDeployment() (booted, staged *RpmOstreeDeployment, err error) {
 	status, err := r.loadStatus()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	for _, deployment := range status.Deployments {
-		if deployment.Booted {
-			deployment := deployment
-			return &deployment, nil
-		}
-	}
+	booted, err = status.getBootedDeployment()
+	staged = status.getStagedDeployment()
 
-	return nil, fmt.Errorf("not currently booted in a deployment")
+	return
 }
 
 // GetStatus returns multi-line human-readable text describing system status
@@ -169,7 +167,7 @@ func (r *RpmOstreeClient) GetStatus() (string, error) {
 // Returns the empty string if the host doesn't have a custom origin that matches pivot://
 // (This could be the case for e.g. FCOS, or a future RHCOS which comes not-pivoted by default)
 func (r *RpmOstreeClient) GetBootedOSImageURL() (string, string, error) {
-	bootedDeployment, err := r.GetBootedDeployment()
+	bootedDeployment, _, err := r.GetBootedAndStagedDeployment()
 	if err != nil {
 		return "", "", err
 	}
@@ -232,7 +230,7 @@ func (r *RpmOstreeClient) Rebase(imgURL, osImageContentDir string) (changed bool
 		ostreeCsum    string
 		ostreeVersion string
 	)
-	defaultDeployment, err := r.GetBootedDeployment()
+	defaultDeployment, _, err := r.GetBootedAndStagedDeployment()
 	if err != nil {
 		return
 	}
@@ -368,4 +366,59 @@ func runGetOut(command string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("error running %s %s: %s%s", command, strings.Join(args, " "), err, errtext)
 	}
 	return rawOut, nil
+}
+
+func (state *rpmOstreeState) getBootedDeployment() (*RpmOstreeDeployment, error) {
+	for num, _ := range state.Deployments {
+		deployment := state.Deployments[num]
+		if deployment.Booted {
+			return &deployment, nil
+		}
+	}
+	return &RpmOstreeDeployment{}, fmt.Errorf("not currently booted in a deployment")
+}
+
+func (state *rpmOstreeState) getStagedDeployment() *RpmOstreeDeployment {
+	for num, _ := range state.Deployments {
+		deployment := state.Deployments[num]
+		if deployment.Staged {
+			return &deployment
+		}
+	}
+	return &RpmOstreeDeployment{}
+}
+
+func stripUnverifiedPrefix(containerImageReference string) (string, error) {
+	containerURLTokens := strings.SplitN(containerImageReference, ":", 2)
+	if len(containerURLTokens) < 2 || containerURLTokens[0] != "ostree-unverified-registry" {
+		return "", fmt.Errorf("failed to strip ostree-unverified-registry: from %q", containerImageReference)
+	}
+	return containerURLTokens[1], nil
+}
+
+// onDesiredImage() checks whether desired image is either booted or live applied
+// it additionally returns whether a rebase is necessary (as opposed to just live applying)
+// Default Deployment values are handled
+func onDesiredImage(desiredImage string, booted, staged *RpmOstreeDeployment) (bool, bool) {
+	var bootedIsLegacy, stagedIsLegacy bool
+	strippedBootedContainerImageReference, err := stripUnverifiedPrefix(booted.ContainerImageReference)
+	if err != nil {
+		bootedIsLegacy = true
+	}
+	var strippedStagedContainerImageReference string
+	if staged.ID != "" {
+		strippedStagedContainerImageReference, err = stripUnverifiedPrefix(staged.ContainerImageReference)
+		if err != nil {
+			stagedIsLegacy = true
+		}
+	}
+
+	return !bootedIsLegacy && !stagedIsLegacy &&
+			(
+			// booted into desiredImage or
+			strippedBootedContainerImageReference == desiredImage && staged.ID == "" && booted.LiveReplaced == "" ||
+				// live applied desiredImage
+				strippedStagedContainerImageReference == desiredImage && booted.LiveReplaced == staged.Checksum),
+		// we could have previously rebased but not live applied (if eg drain failed and update layered was called again)
+		strippedStagedContainerImageReference != desiredImage
 }
