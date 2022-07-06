@@ -348,18 +348,20 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 
 	client := NewNodeUpdaterClient()
 
-	isBootable, retErr := client.IsBootableImage(newConfig.Spec.OSImageURL)
-	if retErr != nil {
-		return
-	}
+	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
+		glog.Infof("OSImageURL is: %s old: %s", newConfig.Spec.OSImageURL, oldConfig.Spec.OSImageURL)
+		isBootable, retErr := client.IsBootableImage(newConfig.Spec.OSImageURL)
+		if retErr != nil {
+			return retErr
+		}
 
-	if newConfig.Spec.ExternalLayeredImage != "" || isBootable {
+		if newConfig.Spec.ExternalLayeredImage != "" || isBootable {
 
-		if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
-			return dn.externalImageUpdate(mcDiff, oldConfig, newConfig)
+			if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
+				return dn.externalImageUpdate(mcDiff, oldConfig, newConfig)
+			}
 		}
 	}
-
 	var osImageContentDir string
 	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
 		// When we're going to apply an OS update, switch the block
@@ -2075,7 +2077,8 @@ func (dn *Daemon) reboot(rationale string) error {
 }
 
 func (dn *CoreOSDaemon) externalImageUpdate(mcDiff machineConfigDiff, oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
-	newURL := newConfig.Spec.ExternalLayeredImage
+	// TODO(jkyros): this is the part that got you, and it hruts
+	newURL := newConfig.Spec.OSImageURL
 	glog.Infof("Updating OS to layered image %s", newURL)
 	client := NewNodeUpdaterClient()
 
@@ -2094,9 +2097,10 @@ func (dn *CoreOSDaemon) externalImageUpdate(mcDiff machineConfigDiff, oldConfig,
 		return err
 	}
 
-	_, needRebase := onDesiredImage(newConfig.Spec.ExternalLayeredImage, booted, staged)
+	// TODO(jkyros): this is ignoring live-apply for now, but since MCD behavior is "the usual", we don't need it yet
+	onDesired, _ := onDesiredImage(newConfig.Spec.ExternalLayeredImage, booted, staged)
 
-	if needRebase {
+	if !onDesired {
 		if err := client.RebaseLayered(newURL); err != nil {
 			nodeName := ""
 			if dn.node != nil {
@@ -2108,23 +2112,26 @@ func (dn *CoreOSDaemon) externalImageUpdate(mcDiff machineConfigDiff, oldConfig,
 		if dn.nodeWriter != nil {
 			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
 		}
-	}
 
-	defer func() {
-		// Operations performed by rpm-ostree on the booted system are available
-		// as staged deployment. It gets applied only when we reboot the system.
-		// In case of an error during any rpm-ostree transaction, removing pending deployment
-		// should be sufficient to discard any applied changes.
-		if retErr != nil {
-			// Print out the error now so that if we fail to cleanup -p, we don't lose it.
-			glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
-			if err := removePendingDeployment(); err != nil {
-				errs := kubeErrs.NewAggregate([]error{err, retErr})
-				retErr = fmt.Errorf("error removing staged deployment: %w", errs)
-				return
+		defer func() {
+			// Operations performed by rpm-ostree on the booted system are available
+			// as staged deployment. It gets applied only when we reboot the system.
+			// In case of an error during any rpm-ostree transaction, removing pending deployment
+			// should be sufficient to discard any applied changes.
+			if retErr != nil {
+				// Print out the error now so that if we fail to cleanup -p, we don't lose it.
+				glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
+				if err := removePendingDeployment(); err != nil {
+					errs := kubeErrs.NewAggregate([]error{err, retErr})
+					retErr = fmt.Errorf("error removing staged deployment: %w", errs)
+					return
+				}
 			}
-		}
-	}()
+		}()
+
+	} else {
+		glog.Infof("Already on desired image %s", newURL)
+	}
 
 	// Apply kargs
 	if mcDiff.kargs {
@@ -2138,6 +2145,7 @@ func (dn *CoreOSDaemon) externalImageUpdate(mcDiff machineConfigDiff, oldConfig,
 		return err
 	}
 
+	// TODO(jkyros): This is where we will handle Joseph's extensions container
 	glog.Infof("Can't apply extensions, not supported yet")
 	// Apply extensions
 	/*if err := dn.applyExtensions(oldConfig, newConfig); err != nil {

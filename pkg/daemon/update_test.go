@@ -164,8 +164,8 @@ func TestReconcilable(t *testing.T) {
 	// Verify Raid changes react as expected
 	oldIgnCfg.Storage.Raid = []ign3types.Raid{
 		{
-			Name:  "data",
-			Level: "stripe",
+			Name:    "data",
+			Level:   "stripe",
 			Devices: []ign3types.Device{"/dev/vda", "/dev/vdb"},
 		},
 	}
@@ -777,4 +777,11 @@ func TestOriginalFileBackupRestore(t *testing.T) {
 	err = restorePath(relativeSymlink)
 	assert.Nil(t, err)
 
+}
+
+func TestParseImageURL(t *testing.T) {
+	//n := NewNodeUpdaterClient()
+	stuff, err := imageInspect("quay.io/jkyros/machine-os:latest")
+	//isBootable, err := n.IsBootableImage("quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:68fbc38e7880065508ea2e47b107dba9f44d6a3b6177b305ed376cd9f5ad68a3")
+	t.Fatalf("IS BOOTABLE: %s %s", stuff, err)
 }

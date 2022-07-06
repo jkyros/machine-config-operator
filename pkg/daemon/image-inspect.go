@@ -10,6 +10,7 @@ import (
 	"github.com/containers/image/v5/docker"
 	"github.com/containers/image/v5/image"
 	"github.com/containers/image/v5/types"
+	"github.com/golang/glog"
 )
 
 const (
@@ -36,12 +37,14 @@ func retryIfNecessary(ctx context.Context, operation func() error) error {
 // newDockerImageSource creates an image source for an image reference.
 // The caller must call .Close() on the returned ImageSource.
 func newDockerImageSource(ctx context.Context, sys *types.SystemContext, name string) (types.ImageSource, error) {
+	glog.Infof("Docker iamge source: %s", name)
 	var imageName string
 	if !strings.HasPrefix(name, "//") {
 		imageName = "//" + name
 	} else {
 		imageName = name
 	}
+	glog.Infof("Parsing the reference: %s", imageName)
 	ref, err := docker.ParseReference(imageName)
 	if err != nil {
 		return nil, err
@@ -58,7 +61,7 @@ func imageInspect(imageName string) (*types.ImageInspectInfo, error) {
 		imgInspect *types.ImageInspectInfo
 		err        error
 	)
-
+	glog.Infof("Inspecting image: %s", imageName)
 	ctx := context.Background()
 	sys := &types.SystemContext{AuthFilePath: kubeletAuthFile}
 

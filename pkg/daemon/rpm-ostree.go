@@ -334,7 +334,7 @@ func (r *RpmOstreeClient) IsBootableImage(imgURL string) (bool, error) {
 // RebaseLayered rebases system or errors if already rebased
 func (r *RpmOstreeClient) RebaseLayered(imgURL string) (err error) {
 	glog.Infof("Executing rebase to %s", imgURL)
-	args := []string{"rebase", "--experimental", "ostree-unverified-registry:" + imgURL}
+	args := []string{"rebase", "--experimental", "ostree-unverified-registry:" + imgURL, "--custom-origin-url", imgURL, "--custom-origin-description", "Managed by machine-config-operator"}
 
 	return runRpmOstree(args...)
 }
@@ -412,7 +412,8 @@ func onDesiredImage(desiredImage string, booted, staged *RpmOstreeDeployment) (b
 			stagedIsLegacy = true
 		}
 	}
-
+	glog.Infof("Booted is legacy: %t", bootedIsLegacy)
+	glog.Infof("Staged is legacy: %t", stagedIsLegacy)
 	return !bootedIsLegacy && !stagedIsLegacy &&
 			(
 			// booted into desiredImage or
