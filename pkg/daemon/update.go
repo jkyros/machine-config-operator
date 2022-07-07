@@ -357,6 +357,22 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		if dn.nodeWriter != nil {
 			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
 		}
+
+		// If this is a new format/ bootable image
+		client := NewNodeUpdaterClient()
+		isBootable, retErr := client.IsBootableImage(newConfig.Spec.OSImageURL)
+		if retErr != nil {
+			// TODO(jkyros): to reduce impact to existing workflows, in the event that we get an error while checking, should we
+			// just fall back to the "regular" image path instead of erroring?
+			return retErr
+		}
+
+		// If this is a "new format"/bootable image, do things the "new" way, instead of the old way where we
+		// extract the image to disk and install the extensions
+		if isBootable {
+			return dn.applyBootableOSImage(mcDiff, oldConfig, newConfig)
+		}
+
 		var err error
 		if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
 			return err
@@ -2090,4 +2106,86 @@ func (dn *Daemon) reboot(rationale string) error {
 	// if everything went well, this should be unreachable.
 	MCDRebootErr.WithLabelValues(dn.node.Name, "reboot failed", "this error should be unreachable, something is seriously wrong").SetToCurrentTime()
 	return fmt.Errorf("reboot failed; this error should be unreachable, something is seriously wrong")
+}
+
+// applyBootableOSImage performs an os update/rebase using
+func (dn *CoreOSDaemon) applyBootableOSImage(mcDiff machineConfigDiff, oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
+
+	newURL := newConfig.Spec.OSImageURL
+	glog.Infof("Updating OS to layered image %s", newURL)
+	client := NewNodeUpdaterClient()
+
+	isBootable, err := client.IsBootableImage(newURL)
+	if err != nil {
+		return err
+	}
+
+	if !isBootable {
+		return fmt.Errorf("Image %s is NOT a bootable container image", newURL)
+	}
+
+	booted, staged, err := client.GetBootedAndStagedDeployment()
+	if err != nil {
+		return err
+	}
+
+	// TODO(jkyros): this is ignoring live-apply for now, but since MCD behavior is "the usual", we don't need it yet
+	onDesired, _ := onDesiredImage(newURL, booted, staged)
+
+	if !onDesired {
+		if err := client.RebaseLayered(newURL); err != nil {
+			nodeName := ""
+			if dn.node != nil {
+				nodeName = dn.node.Name
+			}
+			MCDPivotErr.WithLabelValues(nodeName, newURL, err.Error()).SetToCurrentTime()
+			return err
+		}
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
+		}
+
+		defer func() {
+			// Operations performed by rpm-ostree on the booted system are available
+			// as staged deployment. It gets applied only when we reboot the system.
+			// In case of an error during any rpm-ostree transaction, removing pending deployment
+			// should be sufficient to discard any applied changes.
+			if retErr != nil {
+				// Print out the error now so that if we fail to cleanup -p, we don't lose it.
+				glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
+				if err := removePendingDeployment(); err != nil {
+					errs := kubeErrs.NewAggregate([]error{err, retErr})
+					retErr = fmt.Errorf("error removing staged deployment: %w", errs)
+					return
+				}
+			}
+		}()
+
+	} else {
+		glog.Infof("Already on desired image %s", newURL)
+	}
+
+	// Apply kargs, we can still do this the "old" way since they aren't packed into the image yet
+	if mcDiff.kargs {
+		if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+			return err
+		}
+	}
+
+	// Switch to real time kernel
+	if err := dn.switchKernel(oldConfig, newConfig); err != nil {
+		return err
+	}
+
+	// TODO(jkyros): This is where we will handle Joseph's extensions container
+	glog.Infof("Can't apply extensions, not supported yet")
+	// Apply extensions
+	/*if err := dn.applyExtensions(oldConfig, newConfig); err != nil {
+		return err
+	}*/
+
+	if dn.nodeWriter != nil {
+		dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpdateStaged", "Changes to OS staged")
+	}
+	return nil
 }
