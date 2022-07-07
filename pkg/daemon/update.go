@@ -337,6 +337,10 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpdateStarted", mcDiff.osChangesString())
 	}
 
+	client := NewNodeUpdaterClient()
+	var isLayeredImage bool
+	var err error
+	// TODO(jkyros): This is "pre-steps"
 	var osImageContentDir string
 	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
 		// When we're going to apply an OS update, switch the block
@@ -357,22 +361,41 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		if dn.nodeWriter != nil {
 			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
 		}
-		var err error
-		if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
-			return err
-		}
-		// Delete extracted OS image once we are done.
-		defer os.RemoveAll(osImageContentDir)
 
-		if err := addExtensionsRepo(osImageContentDir); err != nil {
+		if isLayeredImage, err = client.IsBootableImage(newConfig.Spec.OSImageURL); err != nil {
+			// TODO(jkyros): Maybe this shouldn't be an error for now, so we don't impact any
+			// existing customers with our layering changes ?
 			return err
 		}
-		defer os.Remove(extensionsRepo)
+
+		// If it's not a layered image, we have to extract it to disk and handle it the "old way"
+		if !isLayeredImage {
+			var err error
+			if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
+				return err
+			}
+			// Delete extracted OS image once we are done.
+			defer os.RemoveAll(osImageContentDir)
+
+			if err := addExtensionsRepo(osImageContentDir); err != nil {
+				return err
+			}
+			defer os.Remove(extensionsRepo)
+
+		}
 	}
 
 	// Update OS
 	if mcDiff.osUpdate {
-		if err := updateOS(newConfig, osImageContentDir); err != nil {
+
+		if isLayeredImage {
+			// If it's a layered image, do it the layered way
+			err = updateLayeredOS(newConfig)
+		} else {
+			// If it's not a layered image, do it the "old" way
+			err = updateOS(newConfig, osImageContentDir)
+		}
+		if err != nil {
 			nodeName := ""
 			if dn.node != nil {
 				nodeName = dn.node.Name
@@ -406,23 +429,38 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		}
 	}()
 
-	// Apply kargs
-	if mcDiff.kargs {
-		if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+	if isLayeredImage {
+		if mcDiff.kargs {
+			if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+				return err
+			}
+		}
+
+		// Switch to real time kernel
+		if err := dn.switchKernel(oldConfig, newConfig); err != nil {
+			return err
+		}
+
+		// TODO(jkyros): This is where we will handle Joseph's extensions container
+		glog.Infof("Can't apply extensions, not supported yet")
+	} else {
+		// Apply kargs
+		if mcDiff.kargs {
+			if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+				return err
+			}
+		}
+
+		// Switch to real time kernel
+		if err := dn.switchKernel(oldConfig, newConfig); err != nil {
+			return err
+		}
+
+		// Apply extensions
+		if err := dn.applyExtensions(oldConfig, newConfig); err != nil {
 			return err
 		}
 	}
-
-	// Switch to real time kernel
-	if err := dn.switchKernel(oldConfig, newConfig); err != nil {
-		return err
-	}
-
-	// Apply extensions
-	if err := dn.applyExtensions(oldConfig, newConfig); err != nil {
-		return err
-	}
-
 	if dn.nodeWriter != nil {
 		var nodeName string
 		var nodeObjRef corev1.ObjectReference
@@ -1883,6 +1921,18 @@ func updateOS(config *mcfgv1.MachineConfig, osImageContentDir string) error {
 	glog.Infof("Updating OS to %s", newURL)
 	client := NewNodeUpdaterClient()
 	if _, err := client.Rebase(newURL, osImageContentDir); err != nil {
+		return fmt.Errorf("failed to update OS to %s : %w", newURL, err)
+	}
+
+	return nil
+}
+
+// updateLayeredOS updates the system OS to the one specified in newConfig
+func updateLayeredOS(config *mcfgv1.MachineConfig) error {
+	newURL := config.Spec.OSImageURL
+	glog.Infof("Updating OS to layered image %s", newURL)
+	client := NewNodeUpdaterClient()
+	if err := client.RebaseLayered(newURL); err != nil {
 		return fmt.Errorf("failed to update OS to %s : %w", newURL, err)
 	}
 
