@@ -338,25 +338,49 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 	}
 
 	var osImageContentDir string
-	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
-		// When we're going to apply an OS update, switch the block
-		// scheduler to BFQ to apply more fairness between etcd
-		// and the OS update. Only do this on masters since etcd
-		// only operates on masters, and RHEL compute nodes can't
-		// do this.
-		// Add nil check since firstboot also goes through this path,
-		// which doesn't have a node object yet.
-		if dn.node != nil {
-			if _, isControlPlane := dn.node.Labels[ctrlcommon.MasterLabel]; isControlPlane {
-				if err := setRootDeviceSchedulerBFQ(); err != nil {
-					return err
+	// TODO(jkyros): what about where we go backwards? Like when osImageURL is the same, but baseOSUpdate got blanked out
+	if newConfig.Spec.BaseOperatingSystemContainer != "" {
+		if mcDiff.baseOSUpdate || mcDiff.baseOSExtensionsUpdate || mcDiff.extensions || mcDiff.kernelType {
+			// When we're going to apply an OS update, switch the block
+			// scheduler to BFQ to apply more fairness between etcd
+			// and the OS update. Only do this on masters since etcd
+			// only operates on masters, and RHEL compute nodes can't
+			// do this.
+			// Add nil check since firstboot also goes through this path,
+			// which doesn't have a node object yet.
+			if dn.node != nil {
+				if _, isControlPlane := dn.node.Labels[ctrlcommon.MasterLabel]; isControlPlane {
+					if err := setRootDeviceSchedulerBFQ(); err != nil {
+						return err
+					}
 				}
 			}
+			// We emitted this event before, so keep it
+			if dn.nodeWriter != nil {
+				dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
+			}
+
+			// If this is a new format/ bootable image
+			client := NewNodeUpdaterClient()
+			isBootable, retErr := client.IsBootableImage(newConfig.Spec.OSImageURL)
+			if retErr != nil {
+				// TODO(jkyros): to reduce impact to existing workflows, in the event that we get an error while checking, should we
+				// just fall back to the "regular" image path instead of erroring?
+				return retErr
+			}
+
+			// If this is a "new format"/bootable image, do things the "new" way, instead of the old way where we
+			// extract the image to disk and install the extensions
+			if isBootable {
+				return dn.applyLayeredOSImage(mcDiff, oldConfig, newConfig)
+			}
+
 		}
-		// We emitted this event before, so keep it
-		if dn.nodeWriter != nil {
-			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
-		}
+	}
+
+	// If we made it here, we know it's the "old way" and we have to extract the image
+	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
+
 		var err error
 		if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
 			return err
@@ -739,14 +763,16 @@ func (dn *Daemon) removeRollback() error {
 // and the MCO would just operate on that.  For now we're just doing this to get
 // improved logging.
 type machineConfigDiff struct {
-	osUpdate   bool
-	kargs      bool
-	fips       bool
-	passwd     bool
-	files      bool
-	units      bool
-	kernelType bool
-	extensions bool
+	osUpdate               bool
+	baseOSUpdate           bool
+	baseOSExtensionsUpdate bool
+	kargs                  bool
+	fips                   bool
+	passwd                 bool
+	files                  bool
+	units                  bool
+	kernelType             bool
+	extensions             bool
 }
 
 // isEmpty returns true if the machineConfigDiff has no changes, or
@@ -799,14 +825,16 @@ func newMachineConfigDiff(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineC
 	extensionsEmpty := len(oldConfig.Spec.Extensions) == 0 && len(newConfig.Spec.Extensions) == 0
 
 	return &machineConfigDiff{
-		osUpdate:   oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
-		kargs:      !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
-		fips:       oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
-		passwd:     !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
-		files:      !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
-		units:      !reflect.DeepEqual(oldIgn.Systemd.Units, newIgn.Systemd.Units),
-		kernelType: canonicalizeKernelType(oldConfig.Spec.KernelType) != canonicalizeKernelType(newConfig.Spec.KernelType),
-		extensions: !(extensionsEmpty || reflect.DeepEqual(oldConfig.Spec.Extensions, newConfig.Spec.Extensions)),
+		osUpdate:               oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
+		baseOSUpdate:           oldConfig.Spec.BaseOperatingSystemContainer != newConfig.Spec.BaseOperatingSystemContainer,
+		baseOSExtensionsUpdate: oldConfig.Spec.BaseOperatingSystemContainer != newConfig.Spec.BaseOperatingSystemExtensionsContainer,
+		kargs:                  !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
+		fips:                   oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
+		passwd:                 !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
+		files:                  !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
+		units:                  !reflect.DeepEqual(oldIgn.Systemd.Units, newIgn.Systemd.Units),
+		kernelType:             canonicalizeKernelType(oldConfig.Spec.KernelType) != canonicalizeKernelType(newConfig.Spec.KernelType),
+		extensions:             !(extensionsEmpty || reflect.DeepEqual(oldConfig.Spec.Extensions, newConfig.Spec.Extensions)),
 	}, nil
 }
 
@@ -1214,6 +1242,84 @@ func (dn *CoreOSDaemon) switchKernel(oldConfig, newConfig *mcfgv1.MachineConfig)
 		}
 	}
 
+	return nil
+}
+
+// applyBootableOSImage performs an os update/rebase using
+func (dn *CoreOSDaemon) applyLayeredOSImage(mcDiff machineConfigDiff, oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
+
+	newURL := newConfig.Spec.BaseOperatingSystemContainer
+	glog.Infof("Updating OS to layered image %s", newURL)
+	client := NewNodeUpdaterClient()
+
+	isBootable, err := client.IsBootableImage(newURL)
+	if err != nil {
+		return err
+	}
+
+	if !isBootable {
+		return fmt.Errorf("Image %s is NOT a bootable container image", newURL)
+	}
+
+	booted, staged, err := client.GetBootedAndStagedDeployment()
+	if err != nil {
+		return err
+	}
+
+	// TODO(jkyros): this is ignoring live-apply for now, but since MCD behavior is "the usual", we don't need it yet
+	onDesired, _ := onDesiredImage(newURL, booted, staged)
+
+	if !onDesired {
+		if err := client.RebaseLayered(newURL); err != nil {
+			nodeName := ""
+			if dn.node != nil {
+				nodeName = dn.node.Name
+			}
+			MCDPivotErr.WithLabelValues(nodeName, newURL, err.Error()).SetToCurrentTime()
+			return err
+		}
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
+		}
+
+		defer func() {
+			// Operations performed by rpm-ostree on the booted system are available
+			// as staged deployment. It gets applied only when we reboot the system.
+			// In case of an error during any rpm-ostree transaction, removing pending deployment
+			// should be sufficient to discard any applied changes.
+			if retErr != nil {
+				// Print out the error now so that if we fail to cleanup -p, we don't lose it.
+				glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
+				if err := removePendingDeployment(); err != nil {
+					errs := kubeErrs.NewAggregate([]error{err, retErr})
+					retErr = fmt.Errorf("error removing staged deployment: %w", errs)
+					return
+				}
+			}
+		}()
+
+	} else {
+		glog.Infof("Already on desired image %s", newURL)
+	}
+
+	// Apply kargs, we can still do this the "old" way since they aren't packed into the image yet
+	if mcDiff.kargs {
+		if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+			return err
+		}
+	}
+
+	// Switch to real time kernel
+	if err := dn.switchKernel(oldConfig, newConfig); err != nil {
+		return err
+	}
+
+	// TODO(jkyros): This is where we will handle Joseph's extensions container
+	glog.Infof("Can't apply extensions, not supported yet")
+
+	if dn.nodeWriter != nil {
+		dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpdateStaged", "Changes to OS staged")
+	}
 	return nil
 }
 
