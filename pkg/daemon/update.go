@@ -338,40 +338,48 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 	}
 
 	var osImageContentDir string
-	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
-		// When we're going to apply an OS update, switch the block
-		// scheduler to BFQ to apply more fairness between etcd
-		// and the OS update. Only do this on masters since etcd
-		// only operates on masters, and RHEL compute nodes can't
-		// do this.
-		// Add nil check since firstboot also goes through this path,
-		// which doesn't have a node object yet.
-		if dn.node != nil {
-			if _, isControlPlane := dn.node.Labels[ctrlcommon.MasterLabel]; isControlPlane {
-				if err := setRootDeviceSchedulerBFQ(); err != nil {
-					return err
+	// TODO(jkyros): what about where we go backwards? Like when osImageURL is the same, but baseOSUpdate got blanked out
+	if newConfig.Spec.BaseOperatingSystemContainer != "" {
+		if mcDiff.baseOSUpdate || mcDiff.baseOSExtensionsUpdate || mcDiff.extensions || mcDiff.kernelType {
+			// When we're going to apply an OS update, switch the block
+			// scheduler to BFQ to apply more fairness between etcd
+			// and the OS update. Only do this on masters since etcd
+			// only operates on masters, and RHEL compute nodes can't
+			// do this.
+			// Add nil check since firstboot also goes through this path,
+			// which doesn't have a node object yet.
+			if dn.node != nil {
+				if _, isControlPlane := dn.node.Labels[ctrlcommon.MasterLabel]; isControlPlane {
+					if err := setRootDeviceSchedulerBFQ(); err != nil {
+						return err
+					}
 				}
 			}
-		}
-		// We emitted this event before, so keep it
-		if dn.nodeWriter != nil {
-			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
-		}
+			// We emitted this event before, so keep it
+			if dn.nodeWriter != nil {
+				dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
+			}
 
-		// If this is a new format/ bootable image
-		client := NewNodeUpdaterClient()
-		isBootable, retErr := client.IsBootableImage(newConfig.Spec.OSImageURL)
-		if retErr != nil {
-			// TODO(jkyros): to reduce impact to existing workflows, in the event that we get an error while checking, should we
-			// just fall back to the "regular" image path instead of erroring?
-			return retErr
-		}
+			// If this is a new format/ bootable image
+			client := NewNodeUpdaterClient()
+			isBootable, retErr := client.IsBootableImage(newConfig.Spec.OSImageURL)
+			if retErr != nil {
+				// TODO(jkyros): to reduce impact to existing workflows, in the event that we get an error while checking, should we
+				// just fall back to the "regular" image path instead of erroring?
+				return retErr
+			}
 
-		// If this is a "new format"/bootable image, do things the "new" way, instead of the old way where we
-		// extract the image to disk and install the extensions
-		if isBootable {
-			return dn.applyBootableOSImage(mcDiff, oldConfig, newConfig)
+			// If this is a "new format"/bootable image, do things the "new" way, instead of the old way where we
+			// extract the image to disk and install the extensions
+			if isBootable {
+				return dn.applyBootableOSImage(mcDiff, oldConfig, newConfig)
+			}
+
 		}
+	}
+
+	// If we made it here, we know it's the "old way" and we have to extract the image
+	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
 
 		var err error
 		if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
@@ -755,14 +763,16 @@ func (dn *Daemon) removeRollback() error {
 // and the MCO would just operate on that.  For now we're just doing this to get
 // improved logging.
 type machineConfigDiff struct {
-	osUpdate   bool
-	kargs      bool
-	fips       bool
-	passwd     bool
-	files      bool
-	units      bool
-	kernelType bool
-	extensions bool
+	osUpdate               bool
+	baseOSUpdate           bool
+	baseOSExtensionsUpdate bool
+	kargs                  bool
+	fips                   bool
+	passwd                 bool
+	files                  bool
+	units                  bool
+	kernelType             bool
+	extensions             bool
 }
 
 // isEmpty returns true if the machineConfigDiff has no changes, or
@@ -815,14 +825,16 @@ func newMachineConfigDiff(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineC
 	extensionsEmpty := len(oldConfig.Spec.Extensions) == 0 && len(newConfig.Spec.Extensions) == 0
 
 	return &machineConfigDiff{
-		osUpdate:   oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
-		kargs:      !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
-		fips:       oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
-		passwd:     !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
-		files:      !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
-		units:      !reflect.DeepEqual(oldIgn.Systemd.Units, newIgn.Systemd.Units),
-		kernelType: canonicalizeKernelType(oldConfig.Spec.KernelType) != canonicalizeKernelType(newConfig.Spec.KernelType),
-		extensions: !(extensionsEmpty || reflect.DeepEqual(oldConfig.Spec.Extensions, newConfig.Spec.Extensions)),
+		osUpdate:               oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
+		baseOSUpdate:           oldConfig.Spec.BaseOperatingSystemContainer != newConfig.Spec.BaseOperatingSystemContainer,
+		baseOSExtensionsUpdate: oldConfig.Spec.BaseOperatingSystemContainer != newConfig.Spec.BaseOperatingSystemExtensionsContainer,
+		kargs:                  !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
+		fips:                   oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
+		passwd:                 !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
+		files:                  !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
+		units:                  !reflect.DeepEqual(oldIgn.Systemd.Units, newIgn.Systemd.Units),
+		kernelType:             canonicalizeKernelType(oldConfig.Spec.KernelType) != canonicalizeKernelType(newConfig.Spec.KernelType),
+		extensions:             !(extensionsEmpty || reflect.DeepEqual(oldConfig.Spec.Extensions, newConfig.Spec.Extensions)),
 	}, nil
 }
 
