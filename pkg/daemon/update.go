@@ -340,6 +340,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 	var osImageContentDir string
 	// TODO(jkyros): what about where we go backwards? Like when osImageURL is the same, but baseOSUpdate got blanked out
 	if newConfig.Spec.BaseOperatingSystemContainer != "" {
+		glog.Infof("This config has a new format container")
 		if mcDiff.baseOSUpdate || mcDiff.baseOSExtensionsUpdate || mcDiff.extensions || mcDiff.kernelType {
 			// When we're going to apply an OS update, switch the block
 			// scheduler to BFQ to apply more fairness between etcd
@@ -1911,6 +1912,18 @@ func updateOS(config *mcfgv1.MachineConfig, osImageContentDir string) error {
 	glog.Infof("Updating OS to %s", newURL)
 	client := NewNodeUpdaterClient()
 	if _, err := client.Rebase(newURL, osImageContentDir); err != nil {
+		return fmt.Errorf("failed to update OS to %s : %w", newURL, err)
+	}
+
+	return nil
+}
+
+// updateBootableOS updates the system OS to the one specified in newConfig
+func updateBootableOS(config *mcfgv1.MachineConfig) error {
+	newURL := config.Spec.BaseOperatingSystemContainer
+	glog.Infof("Updating OS to layered image %s", newURL)
+	client := NewNodeUpdaterClient()
+	if err := client.RebaseLayered(newURL); err != nil {
 		return fmt.Errorf("failed to update OS to %s : %w", newURL, err)
 	}
 
