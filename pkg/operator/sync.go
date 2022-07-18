@@ -263,6 +263,8 @@ func (optr *Operator) syncRenderConfig(_ *renderConfig) error {
 	imgs.BaseOperatingSystemContainer = oscontainer
 	imgs.BaseOperatingSystemExtensionsContainer = osextensionscontainer
 
+	glog.Infof("Exetnsions container is: %s", osextensionscontainer)
+
 	// sync up the ControllerConfigSpec
 	infra, network, proxy, dns, err := optr.getGlobalConfig()
 	if err != nil {
@@ -311,6 +313,7 @@ func (optr *Operator) syncRenderConfig(_ *renderConfig) error {
 	spec.PullSecret = &corev1.ObjectReference{Namespace: "openshift-config", Name: "pull-secret"}
 	spec.OSImageURL = imgs.MachineOSContent
 	spec.BaseOperatingSystemContainer = imgs.BaseOperatingSystemContainer
+	spec.BaseOperatingSystemExtensionsContainer = imgs.BaseOperatingSystemExtensionsContainer
 	spec.Images = map[string]string{
 		templatectrl.MachineConfigOperatorKey: imgs.MachineConfigOperator,
 
@@ -875,6 +878,7 @@ func (optr *Operator) getOsImageURLs(namespace string) (string, string, string, 
 	}
 
 	newextensions, hasNewExtensions := cm.Data["baseOperatingSystemExtensionsContainer"]
+	glog.Infof("New extensions is %s - %t", newextensions, hasNewExtensions)
 
 	newformat, hasNewFormat := cm.Data["baseOperatingSystemContainer"]
 
