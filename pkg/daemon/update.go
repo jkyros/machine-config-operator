@@ -338,66 +338,54 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 	}
 
 	var osImageContentDir string
-	// TODO(jkyros): what about where we go backwards? Like when osImageURL is the same, but baseOSUpdate got blanked out
-	if newConfig.Spec.BaseOperatingSystemContainer != "" {
-		glog.Infof("This config has a new format container")
-		if mcDiff.baseOSUpdate || mcDiff.baseOSExtensionsUpdate || mcDiff.extensions || mcDiff.kernelType {
-			// When we're going to apply an OS update, switch the block
-			// scheduler to BFQ to apply more fairness between etcd
-			// and the OS update. Only do this on masters since etcd
-			// only operates on masters, and RHEL compute nodes can't
-			// do this.
-			// Add nil check since firstboot also goes through this path,
-			// which doesn't have a node object yet.
-			if dn.node != nil {
-				if _, isControlPlane := dn.node.Labels[ctrlcommon.MasterLabel]; isControlPlane {
-					if err := setRootDeviceSchedulerBFQ(); err != nil {
-						return err
-					}
+	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
+		// When we're going to apply an OS update, switch the block
+		// scheduler to BFQ to apply more fairness between etcd
+		// and the OS update. Only do this on masters since etcd
+		// only operates on masters, and RHEL compute nodes can't
+		// do this.
+		// Add nil check since firstboot also goes through this path,
+		// which doesn't have a node object yet.
+		if dn.node != nil {
+			if _, isControlPlane := dn.node.Labels[ctrlcommon.MasterLabel]; isControlPlane {
+				if err := setRootDeviceSchedulerBFQ(); err != nil {
+					return err
 				}
 			}
-			// We emitted this event before, so keep it
-			if dn.nodeWriter != nil {
-				dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
-			}
-
-			// If this is a new format/ bootable image
-			client := NewNodeUpdaterClient()
-			isBootable, retErr := client.IsBootableImage(newConfig.Spec.OSImageURL)
-			if retErr != nil {
-				// TODO(jkyros): to reduce impact to existing workflows, in the event that we get an error while checking, should we
-				// just fall back to the "regular" image path instead of erroring?
-				return retErr
-			}
-
-			// If this is a "new format"/bootable image, do things the "new" way, instead of the old way where we
-			// extract the image to disk and install the extensions
-			if isBootable {
-				return dn.applyLayeredOSImage(mcDiff, oldConfig, newConfig)
-			}
-
 		}
-	}
-
-	// If we made it here, we know it's the "old way" and we have to extract the image
-	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
-
+		// We emitted this event before, so keep it
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
+		}
 		var err error
-		if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
-			return err
-		}
-		// Delete extracted OS image once we are done.
-		defer os.RemoveAll(osImageContentDir)
 
-		if err := addExtensionsRepo(osImageContentDir); err != nil {
-			return err
+		// If we don't have a "new format" image, do things the old way where we extract the image locally
+		if newConfig.Spec.BaseOperatingSystemContainer == "" {
+			if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
+				return err
+			}
+			// Delete extracted OS image once we are done.
+			defer os.RemoveAll(osImageContentDir)
+
+			if err := addExtensionsRepo(osImageContentDir); err != nil {
+				return err
+			}
+			defer os.Remove(extensionsRepo)
 		}
-		defer os.Remove(extensionsRepo)
 	}
 
 	// Update OS
 	if mcDiff.osUpdate {
-		if err := updateOS(newConfig, osImageContentDir); err != nil {
+		var err error
+		if newConfig.Spec.BaseOperatingSystemContainer != "" {
+			// if we have a "new format" image, apply the new way
+			err = dn.applyLayeredOSImage(mcDiff, oldConfig, newConfig)
+		} else {
+			// otherwise do it the old way
+			err = updateOS(newConfig, osImageContentDir)
+		}
+
+		if err != nil {
 			nodeName := ""
 			if dn.node != nil {
 				nodeName = dn.node.Name
@@ -405,6 +393,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 			MCDPivotErr.WithLabelValues(nodeName, newConfig.Spec.OSImageURL, err.Error()).SetToCurrentTime()
 			return err
 		}
+
 		if dn.nodeWriter != nil {
 			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
 		}
