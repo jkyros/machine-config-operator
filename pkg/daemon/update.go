@@ -330,6 +330,7 @@ func removePendingDeployment() error {
 	return runRpmOstree("cleanup", "-p")
 }
 
+//nolint:gocyclo
 func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
 	// Extract image and add coreos-extensions repo if we have either OS update or package layering to perform
 
@@ -337,10 +338,12 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpdateStarted", mcDiff.osChangesString())
 	}
 
+	// TODO(jkyros): both paths (layering/non-layering) have different pre/update/post steps, but the events are the same. I hate to
+	// duplicate the eventing code, but I feel like I should split this function into like "applyLegacyOSChanges" and "applyLayeredOSChanges"
+
 	client := NewNodeUpdaterClient()
 	var isLayeredImage bool
 	var err error
-	// TODO(jkyros): This is "pre-steps"
 	var osImageContentDir string
 	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
 		// When we're going to apply an OS update, switch the block
@@ -389,10 +392,10 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 	if mcDiff.osUpdate {
 
 		if isLayeredImage {
-			// If it's a layered image, do it the layered way
+			// If it's a layered image, update it the layered way
 			err = updateLayeredOS(newConfig)
 		} else {
-			// If it's not a layered image, do it the "old" way
+			// If it's not a layered image, apply it from where we extracted it to disk
 			err = updateOS(newConfig, osImageContentDir)
 		}
 		if err != nil {

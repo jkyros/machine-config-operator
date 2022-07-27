@@ -54,7 +54,7 @@ func strToPtr(s string) *string {
 // It sorts all the configs in increasing order of their name.
 // It uses the Ignition config from first object as base and appends all the rest.
 // Kernel arguments are concatenated.
-// It uses only the OSImageURL provided by the CVO and ignores any MC provided OSImageURL.
+// It defaults to the OSImageURL provided by the CVO but allows a MC provided OSImageURL to take precedence.
 func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, osImageURL string) (*mcfgv1.MachineConfig, error) {
 	if len(configs) == 0 {
 		return nil, nil
@@ -122,6 +122,13 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, osImageURL string) (*m
 	if kernelType != KernelTypeDefault {
 		if InSlice("kernel-devel", extensions) {
 			return nil, fmt.Errorf("installing kernel-devel extension is not supported with kernelType: %s", kernelType)
+		}
+	}
+
+	// For layering, we want to let the user override OSImageURL again
+	for _, cfg := range configs {
+		if cfg.Spec.OSImageURL != "" {
+			osImageURL = cfg.Spec.OSImageURL
 		}
 	}
 
