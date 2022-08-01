@@ -338,14 +338,8 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpdateStarted", mcDiff.osChangesString())
 	}
 
-	// TODO(jkyros): both paths (layering/non-layering) have different pre/update/post steps, but the events are the same. I hate to
-	// duplicate the eventing code, but I feel like I should split this function into like "applyLegacyOSChanges" and "applyLayeredOSChanges"
-
-	client := NewNodeUpdaterClient()
-	var isLayeredImage bool
-	var err error
-	var osImageContentDir string
 	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType {
+
 		// When we're going to apply an OS update, switch the block
 		// scheduler to BFQ to apply more fairness between etcd
 		// and the OS update. Only do this on masters since etcd
@@ -353,6 +347,8 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 		// do this.
 		// Add nil check since firstboot also goes through this path,
 		// which doesn't have a node object yet.
+		// This is okay because we know if we made it here, we are going
+		// to reboot and this setting does not persist across reboots.
 		if dn.node != nil {
 			if _, isControlPlane := dn.node.Labels[ctrlcommon.MasterLabel]; isControlPlane {
 				if err := setRootDeviceSchedulerBFQ(); err != nil {
@@ -365,105 +361,26 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "InClusterUpgrade", fmt.Sprintf("Updating from oscontainer %s", newConfig.Spec.OSImageURL))
 		}
 
-		if isLayeredImage, err = client.IsBootableImage(newConfig.Spec.OSImageURL); err != nil {
-			// TODO(jkyros): Maybe this shouldn't be an error for now, so we don't impact any
-			// existing customers with our layering changes ?
-			return err
+		// The steps from here on are different depending on the image type, so check the image type
+		isLayeredImage, err := dn.NodeUpdaterClient.IsBootableImage(newConfig.Spec.OSImageURL)
+		if err != nil {
+			return fmt.Errorf("Error checking type of update image: %w", err)
 		}
-
-		// If it's not a layered image, we have to extract it to disk and handle it the "old way"
-		if !isLayeredImage {
-			var err error
-			if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
-				return err
-			}
-			// Delete extracted OS image once we are done.
-			defer os.RemoveAll(osImageContentDir)
-
-			if err := addExtensionsRepo(osImageContentDir); err != nil {
-				return err
-			}
-			defer os.Remove(extensionsRepo)
-
-		}
-	}
-
-	// Update OS
-	if mcDiff.osUpdate {
 
 		if isLayeredImage {
-			// If it's a layered image, update it the layered way
-			err = updateLayeredOS(newConfig)
+			// If it's a layered/bootable image, then apply it the "new" way
+			if err := dn.applyLayeredOSChanges(mcDiff, oldConfig, newConfig); err != nil {
+				return err
+			}
 		} else {
-			// If it's not a layered image, apply it from where we extracted it to disk
-			err = updateOS(newConfig, osImageContentDir)
-		}
-		if err != nil {
-			nodeName := ""
-			if dn.node != nil {
-				nodeName = dn.node.Name
-			}
-			MCDPivotErr.WithLabelValues(nodeName, newConfig.Spec.OSImageURL, err.Error()).SetToCurrentTime()
-			return err
-		}
-		if dn.nodeWriter != nil {
-			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
-		}
-	} else { //nolint:gocritic // The nil check for dn.nodeWriter has nothing to do with an OS update being unavailable.
-		// An OS upgrade is not available
-		if dn.nodeWriter != nil {
-			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeSkipped", "OS upgrade skipped; new MachineConfig (%s) has same OS image (%s) as old MachineConfig (%s)", newConfig.Name, newConfig.Spec.OSImageURL, oldConfig.Name)
-		}
-	}
-
-	defer func() {
-		// Operations performed by rpm-ostree on the booted system are available
-		// as staged deployment. It gets applied only when we reboot the system.
-		// In case of an error during any rpm-ostree transaction, removing pending deployment
-		// should be sufficient to discard any applied changes.
-		if retErr != nil {
-			// Print out the error now so that if we fail to cleanup -p, we don't lose it.
-			glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
-			if err := removePendingDeployment(); err != nil {
-				errs := kubeErrs.NewAggregate([]error{err, retErr})
-				retErr = fmt.Errorf("error removing staged deployment: %w", errs)
-				return
-			}
-		}
-	}()
-
-	if isLayeredImage {
-		if mcDiff.kargs {
-			if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+			// Otherwise fall back to the old way -- we can take this out someday when it goes away
+			if err := dn.applyLegacyOSChanges(mcDiff, oldConfig, newConfig); err != nil {
 				return err
 			}
 		}
 
-		// Switch to real time kernel
-		if err := dn.switchKernel(oldConfig, newConfig); err != nil {
-			return err
-		}
-
-		// TODO(jkyros): This is where we will handle Joseph's extensions container
-		glog.Infof("Can't apply extensions, not supported yet")
-	} else {
-		// Apply kargs
-		if mcDiff.kargs {
-			if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
-				return err
-			}
-		}
-
-		// Switch to real time kernel
-		if err := dn.switchKernel(oldConfig, newConfig); err != nil {
-			return err
-		}
-
-		// Apply extensions
-		if err := dn.applyExtensions(oldConfig, newConfig); err != nil {
-			return err
-		}
 	}
+
 	if dn.nodeWriter != nil {
 		var nodeName string
 		var nodeObjRef corev1.ObjectReference
@@ -475,6 +392,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 				UID:  dn.node.GetUID(),
 			}
 		}
+
 		// We send out the event OSUpdateStaged synchronously to ensure it is recorded.
 		// Remove this when we can ensure all events are sent before exiting.
 		t := metav1.NewTime(time.Now())
@@ -2143,4 +2061,136 @@ func (dn *Daemon) reboot(rationale string) error {
 	// if everything went well, this should be unreachable.
 	MCDRebootErr.WithLabelValues(dn.node.Name, "reboot failed", "this error should be unreachable, something is seriously wrong").SetToCurrentTime()
 	return fmt.Errorf("reboot failed; this error should be unreachable, something is seriously wrong")
+}
+
+func (dn *CoreOSDaemon) applyLayeredOSChanges(mcDiff machineConfigDiff, oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
+
+	// Update OS
+	if mcDiff.osUpdate {
+
+		err := updateLayeredOS(newConfig)
+
+		if err != nil {
+			nodeName := ""
+			if dn.node != nil {
+				nodeName = dn.node.Name
+			}
+			MCDPivotErr.WithLabelValues(nodeName, newConfig.Spec.OSImageURL, err.Error()).SetToCurrentTime()
+			return err
+		}
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
+		}
+	} else { //nolint:gocritic // The nil check for dn.nodeWriter has nothing to do with an OS update being unavailable.
+		// An OS upgrade is not available
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeSkipped", "OS upgrade skipped; new MachineConfig (%s) has same OS image (%s) as old MachineConfig (%s)", newConfig.Name, newConfig.Spec.OSImageURL, oldConfig.Name)
+		}
+	}
+
+	defer func() {
+		// Operations performed by rpm-ostree on the booted system are available
+		// as staged deployment. It gets applied only when we reboot the system.
+		// In case of an error during any rpm-ostree transaction, removing pending deployment
+		// should be sufficient to discard any applied changes.
+		if retErr != nil {
+			// Print out the error now so that if we fail to cleanup -p, we don't lose it.
+			glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
+			if err := removePendingDeployment(); err != nil {
+				errs := kubeErrs.NewAggregate([]error{err, retErr})
+				retErr = fmt.Errorf("error removing staged deployment: %w", errs)
+				return
+			}
+		}
+	}()
+
+	if mcDiff.kargs {
+		if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+			return err
+		}
+	}
+
+	// Switch to real time kernel
+	if err := dn.switchKernel(oldConfig, newConfig); err != nil {
+		return err
+	}
+
+	// TODO(jkyros): This is where we will handle Joseph's extensions container
+	glog.Infof("Can't apply extensions, not supported yet")
+
+	return nil
+}
+
+func (dn *CoreOSDaemon) applyLegacyOSChanges(mcDiff machineConfigDiff, oldConfig, newConfig *mcfgv1.MachineConfig) (retErr error) {
+
+	var osImageContentDir string
+	var err error
+	if osImageContentDir, err = ExtractOSImage(newConfig.Spec.OSImageURL); err != nil {
+		return err
+	}
+	// Delete extracted OS image once we are done.
+	defer os.RemoveAll(osImageContentDir)
+
+	if err := addExtensionsRepo(osImageContentDir); err != nil {
+		return err
+	}
+	defer os.Remove(extensionsRepo)
+
+	// Update OS
+	if mcDiff.osUpdate {
+
+		err = updateOS(newConfig, osImageContentDir)
+
+		if err != nil {
+			nodeName := ""
+			if dn.node != nil {
+				nodeName = dn.node.Name
+			}
+			MCDPivotErr.WithLabelValues(nodeName, newConfig.Spec.OSImageURL, err.Error()).SetToCurrentTime()
+			return err
+		}
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeApplied", "OS upgrade applied; new MachineConfig (%s) has new OS image (%s)", newConfig.Name, newConfig.Spec.OSImageURL)
+		}
+	} else { //nolint:gocritic // The nil check for dn.nodeWriter has nothing to do with an OS update being unavailable.
+		// An OS upgrade is not available
+		if dn.nodeWriter != nil {
+			dn.nodeWriter.Eventf(corev1.EventTypeNormal, "OSUpgradeSkipped", "OS upgrade skipped; new MachineConfig (%s) has same OS image (%s) as old MachineConfig (%s)", newConfig.Name, newConfig.Spec.OSImageURL, oldConfig.Name)
+		}
+	}
+
+	defer func() {
+		// Operations performed by rpm-ostree on the booted system are available
+		// as staged deployment. It gets applied only when we reboot the system.
+		// In case of an error during any rpm-ostree transaction, removing pending deployment
+		// should be sufficient to discard any applied changes.
+		if retErr != nil {
+			// Print out the error now so that if we fail to cleanup -p, we don't lose it.
+			glog.Infof("Rolling back applied changes to OS due to error: %v", retErr)
+			if err := removePendingDeployment(); err != nil {
+				errs := kubeErrs.NewAggregate([]error{err, retErr})
+				retErr = fmt.Errorf("error removing staged deployment: %w", errs)
+				return
+			}
+		}
+	}()
+
+	// Apply kargs
+	if mcDiff.kargs {
+		if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+			return err
+		}
+	}
+
+	// Switch to real time kernel
+	if err := dn.switchKernel(oldConfig, newConfig); err != nil {
+		return err
+	}
+
+	// Apply extensions
+	if err := dn.applyExtensions(oldConfig, newConfig); err != nil {
+		return err
+	}
+
+	return nil
 }
