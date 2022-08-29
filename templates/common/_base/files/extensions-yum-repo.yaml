@@ -1,0 +1,11 @@
+{{if .BaseOperatingSystemExtensionsContainer }}
+mode: 0600
+path: "/etc/yum.repos.d/rhel-coreos-8-extensions.repo"
+contents:
+  inline: |
+    [rhel-coreos-8-extensions]
+    name=extensions
+    baseurl=http://rhel-coreos-8-extensions.openshift-machine-config-operator.svc:9091/
+    enabled=1
+    gpgcheck=1
+{{end}}
