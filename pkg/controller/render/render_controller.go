@@ -563,7 +563,16 @@ func generateRenderedMachineConfig(pool *mcfgv1.MachineConfigPool, configs []*mc
 		}
 	}
 
-	merged, err := ctrlcommon.MergeMachineConfigs(configs, cconfig.Spec.OSImageURL)
+	// If our new image formats are populated
+	// TODO(jkyros): "properly" feature gate this? This is kind of a 'soft' gate based on the presence of extensions container,
+	// which is not currently present by default
+	var defaultOSImageURL = cconfig.Spec.OSImageURL
+	if cconfig.Spec.BaseOperatingSystemContainer != "" && cconfig.Spec.BaseOperatingSystemExtensionsContainer != "" {
+		glog.Infof("Defaulting to new format image because extensions container is present")
+		defaultOSImageURL = cconfig.Spec.BaseOperatingSystemContainer
+	}
+
+	merged, err := ctrlcommon.MergeMachineConfigs(configs, defaultOSImageURL)
 	if err != nil {
 		return nil, err
 	}
@@ -583,7 +592,7 @@ func generateRenderedMachineConfig(pool *mcfgv1.MachineConfigPool, configs []*mc
 
 	// Make it obvious that the OSImageURL has been overridden. If we log this in MergeMachineConfigs, we don't know the name yet, so we're
 	// logging out here instead so it's actually helpful.
-	if merged.Spec.OSImageURL != cconfig.Spec.OSImageURL {
+	if merged.Spec.OSImageURL != defaultOSImageURL {
 		glog.Infof("OSImageURL has been overridden via machineconfig in %s (was: %s is: %s)", merged.Name, cconfig.Spec.OSImageURL, merged.Spec.OSImageURL)
 	}
 

@@ -294,7 +294,9 @@ func generateMachineConfigForName(config *RenderConfig, role, name, templateDir,
 		return nil, fmt.Errorf("error creating MachineConfig from Ignition config: %w", err)
 	}
 	// And inject the osimageurl here
-	mcfg.Spec.OSImageURL = config.OSImageURL
+	// TODO(jkyros): if we're allowing overrides, this makes it hard to figure out of the user overrode it, or if it's just
+	// "passthrough" from here since we don't mark "system" vs "user" machineconfigs.
+	// mcfg.Spec.OSImageURL = config.OSImageURL
 
 	return mcfg, nil
 }
