@@ -417,6 +417,9 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 }
 
 func calculatePostConfigChangeActionFromFileDiffs(diffFileSet []string) (actions []string) {
+	directoriesPostConfigChangeActionNone := []string{
+		"/etc/yum.repos.d/",
+	}
 	filesPostConfigChangeActionNone := []string{
 		"/etc/kubernetes/kubelet-ca.crt",
 		"/var/lib/kubelet/config.json",
@@ -429,7 +432,7 @@ func calculatePostConfigChangeActionFromFileDiffs(diffFileSet []string) (actions
 
 	actions = []string{postConfigChangeActionNone}
 	for _, path := range diffFileSet {
-		if ctrlcommon.InSlice(path, filesPostConfigChangeActionNone) {
+		if ctrlcommon.InSlice(path, filesPostConfigChangeActionNone) || ctrlcommon.HasPrefixSlice(path, directoriesPostConfigChangeActionNone) {
 			continue
 		} else if ctrlcommon.InSlice(path, filesPostConfigChangeActionReloadCrio) {
 			actions = []string{postConfigChangeActionReloadCrio}

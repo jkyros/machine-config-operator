@@ -436,6 +436,16 @@ func InSlice(elem string, slice []string) bool {
 	return false
 }
 
+// HasPrefixSlice search for an element in slice and return true if the element has matching prefix, otherwise return false
+func HasPrefixSlice(elem string, slice []string) bool {
+	for _, k := range slice {
+		if strings.HasPrefix(elem, k) {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateMachineConfig validates that given MachineConfig Spec is valid.
 func ValidateMachineConfig(cfg mcfgv1.MachineConfigSpec) error {
 	if !(cfg.KernelType == "" || cfg.KernelType == KernelTypeDefault || cfg.KernelType == KernelTypeRealtime) {
