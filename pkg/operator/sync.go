@@ -60,6 +60,8 @@ type manifestPaths struct {
 	clusterRoleBindings []string
 	serviceAccounts     []string
 	secrets             []string
+	services            []string
+	deployments         []string
 	daemonset           string
 }
 
@@ -90,6 +92,10 @@ const (
 	mcsNodeBootstrapperServiceAccountManifestPath = "manifests/machineconfigserver/node-bootstrapper-sa.yaml"
 	mcsNodeBootstrapperTokenManifestPath          = "manifests/machineconfigserver/node-bootstrapper-token.yaml"
 	mcsDaemonsetManifestPath                      = "manifests/machineconfigserver/daemonset.yaml"
+
+	// Extensions container manifest paths
+	mccExtensionsContainerServicePath = "manifests/machineconfigcontroller/extensionsService.yaml"
+	mccExtensionsDeploymentPath       = "manifests/machineconfigcontroller/extensionsDeployment.yaml"
 )
 
 type syncFunc struct {
@@ -525,6 +531,33 @@ func (optr *Operator) applyManifests(config *renderConfig, paths manifestPaths) 
 		}
 	}
 
+	for _, path := range paths.deployments {
+		sBytes, err := renderAsset(config, path)
+		if err != nil {
+			return err
+		}
+		glog.Infof("Rendered deployment: %s", sBytes)
+		d := resourceread.ReadDeploymentV1OrDie(sBytes)
+		// TODO(jkyros): need that generation object so we can make sure we got the generation stuff set up
+		_, _, err = resourceapply.ApplyDeployment(context.TODO(), optr.kubeClient.AppsV1(), optr.libgoRecorder, d, 1)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, path := range paths.services {
+		sBytes, err := renderAsset(config, path)
+		if err != nil {
+			return err
+		}
+		glog.Infof("Rendered service: %s", sBytes)
+		s := resourceread.ReadServiceV1OrDie(sBytes)
+		_, _, err = resourceapply.ApplyService(context.TODO(), optr.kubeClient.CoreV1(), optr.libgoRecorder, s)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -585,6 +618,30 @@ func (optr *Operator) syncMachineConfigController(config *renderConfig) error {
 		return err
 	}
 	return optr.waitForControllerConfigToBeCompleted(cc)
+}
+
+func (optr *Operator) syncExtensionsContainer(config *renderConfig) error {
+	paths := manifestPaths{
+		services: []string{
+			mccExtensionsContainerServicePath,
+		},
+		deployments: []string{
+			mccExtensionsDeploymentPath,
+		},
+	}
+	// TODO(jkyros): not sure I like conditional application of manifests here, but it will fail if we don't have the image for it
+	// If we don't have an extensions container, we don't have anything to apply here
+	if config.ControllerConfig.BaseOperatingSystemExtensionsContainer == "" {
+		return nil
+	}
+
+	if err := optr.applyManifests(config, paths); err != nil {
+		return fmt.Errorf("failed to apply extension contanier manifests: %w", err)
+	}
+
+	// TODO(jkyros): do we trust kubernetes, or should we wait here for the service ?git
+
+	return nil
 }
 
 func (optr *Operator) syncMachineConfigDaemon(config *renderConfig) error {
