@@ -566,11 +566,14 @@ func generateRenderedMachineConfig(pool *mcfgv1.MachineConfigPool, configs []*mc
 	// If our new image formats are populated
 	// TODO(jkyros): "properly" feature gate this? This is kind of a 'soft' gate based on the presence of extensions container,
 	// which is not currently present by default
-	var defaultOSImageURL = cconfig.Spec.OSImageURL
-	if cconfig.Spec.BaseOperatingSystemContainer != "" && cconfig.Spec.BaseOperatingSystemExtensionsContainer != "" {
-		glog.Infof("Defaulting to new format image because extensions container is present")
-		defaultOSImageURL = cconfig.Spec.BaseOperatingSystemContainer
-	}
+	var defaultOSImageURL = cconfig.Spec.BaseOperatingSystemContainer
+	/*
+		if cconfig.Spec.BaseOperatingSystemContainer != "" && cconfig.Spec.BaseOperatingSystemExtensionsContainer != "" {
+			glog.Infof("Defaulting to new format image because extensions container is present")
+			defaultOSImageURL = cconfig.Spec.BaseOperatingSystemContainer
+		} else {
+			glog.Infof("Not both populated, using OSImageURL: %s %s", cconfig.Spec.BaseOperatingSystemContainer, cconfig.Spec.BaseOperatingSystemExtensionsContainer)
+		}*/
 
 	merged, err := ctrlcommon.MergeMachineConfigs(configs, defaultOSImageURL)
 	if err != nil {
