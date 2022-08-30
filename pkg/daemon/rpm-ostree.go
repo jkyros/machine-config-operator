@@ -89,6 +89,12 @@ func NewNodeUpdaterClient() NodeUpdaterClient {
 // and gathering stderr into a buffer which will be returned in err
 // in case of error.
 func runRpmOstree(args ...string) error {
+	// TODO(jkyros): update seems to want to check this too, so we probably just need to make sure it's there before we make an rpm-ostree call
+	err := useKubeletConfigSecrets()
+	if err != nil {
+		return fmt.Errorf("Error while ensuring access to kublet config.json pull secrets: %w", err)
+	}
+
 	return runCmdSync("rpm-ostree", args...)
 }
 
