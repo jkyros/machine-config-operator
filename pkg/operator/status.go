@@ -613,7 +613,8 @@ func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, versi
 	// TODO(jkyros): There is the "I'm upgrading, I need to make sure I'm on the osimageurl that came with the upgrade" case we still want to
 	// check, but normally now that we allow OSImageURL, this is okay
 	if renderedMC.Spec.OSImageURL != osURL && renderedMC.Spec.OSImageURL != newFormatOsURL {
-		return fmt.Errorf("osImageURL mismatch for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
+		glog.Warningf("osImageURL has been overridden for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
+		//nolint:gocritic return fmt.Errorf("osImageURL mismatch for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
 	}
 
 	// check that the rendered config matches the OCP release version for cases where there is no OSImageURL change nor new MCO commit
