@@ -563,7 +563,9 @@ func (optr *Operator) allMachineConfigPoolStatus() (map[string]string, error) {
 
 // isMachineConfigPoolConfigurationValid returns nil, or error when the configuration of a `pool` is created by the controller at version `version`,
 // when the osImageURL does not match what's in the configmap or when the rendered-config-xxx does not match the OCP release version.
-func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, version, releaseVersion, newFormatOsURL, osURL string, machineConfigGetter func(string) (*mcfgv1.MachineConfig, error)) error {
+// TODO(jkyros): this should probably be an Operator method, but we'd have to mock a lot more for the test, Testability seems to be
+// why we keep stuffing arguments into this method.
+func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, version, releaseVersion, newFormatOsURL, osURL string, machineConfigGetter func(string) (*mcfgv1.MachineConfig, error), isUpgrading bool) error {
 	// both .status.configuration.name and .status.configuration.source must be set.
 	if pool.Spec.Configuration.Name == "" {
 		return fmt.Errorf("configuration spec for pool %s is empty: %v", pool.GetName(), machineConfigPoolStatus(pool))
@@ -610,10 +612,15 @@ func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, versi
 		return err
 	}
 
-	// TODO(jkyros): There is the "I'm upgrading, I need to make sure I'm on the osimageurl that came with the upgrade" case we still want to
-	// check, but normally now that we allow OSImageURL, this is okay
+	// We allow OSImageURL overrides now, so this can't be a hard error by itself anymore
 	if renderedMC.Spec.OSImageURL != osURL && renderedMC.Spec.OSImageURL != newFormatOsURL {
-		return fmt.Errorf("osImageURL mismatch for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
+		// This gets really spammy if the URL is overridden, mostly just for debugging
+		glog.V(4).Infof("osImageURL has been overridden for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
+
+		// TODO(jkyros): what I'm going for is "if we're upgrading and we've overridden the osimageURL, that's bad, otherwise it's okay"
+		if isUpgrading {
+			return fmt.Errorf("osImageURL mismatch while upgrading for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
+		}
 	}
 
 	// check that the rendered config matches the OCP release version for cases where there is no OSImageURL change nor new MCO commit
