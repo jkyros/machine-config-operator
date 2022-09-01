@@ -563,7 +563,7 @@ func (optr *Operator) allMachineConfigPoolStatus() (map[string]string, error) {
 
 // isMachineConfigPoolConfigurationValid returns nil, or error when the configuration of a `pool` is created by the controller at version `version`,
 // when the osImageURL does not match what's in the configmap or when the rendered-config-xxx does not match the OCP release version.
-func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, version, releaseVersion, osURL string, machineConfigGetter func(string) (*mcfgv1.MachineConfig, error)) error {
+func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, version, releaseVersion, newFormatOsURL, osURL string, machineConfigGetter func(string) (*mcfgv1.MachineConfig, error)) error {
 	// both .status.configuration.name and .status.configuration.source must be set.
 	if pool.Spec.Configuration.Name == "" {
 		return fmt.Errorf("configuration spec for pool %s is empty: %v", pool.GetName(), machineConfigPoolStatus(pool))
@@ -609,7 +609,10 @@ func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, versi
 	if err != nil {
 		return err
 	}
-	if renderedMC.Spec.OSImageURL != osURL {
+
+	// TODO(jkyros): There is the "I'm upgrading, I need to make sure I'm on the osimageurl that came with the upgrade" case we still want to
+	// check, but normally now that we allow OSImageURL, this is okay
+	if renderedMC.Spec.OSImageURL != osURL && renderedMC.Spec.OSImageURL != newFormatOsURL {
 		return fmt.Errorf("osImageURL mismatch for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
 	}
 
