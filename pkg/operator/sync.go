@@ -692,13 +692,13 @@ func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 			_, hasRequiredPoolLabel := pool.Labels[requiredForUpgradeMachineConfigPoolLabelKey]
 
 			if hasRequiredPoolLabel {
-				_, _, opURL, err := optr.getOsImageURLs(optr.namespace)
+				newFormatOpURL, _, opURL, err := optr.getOsImageURLs(optr.namespace)
 				if err != nil {
 					glog.Errorf("Error getting configmap osImageURL: %q", err)
 					return false, nil
 				}
 				releaseVersion, _ := optr.vStore.Get("operator")
-				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, optr.mcLister.Get); err != nil {
+				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, optr.mcLister.Get); err != nil {
 					lastErr = fmt.Errorf("pool %s has not progressed to latest configuration: %w, retrying", pool.Name, err)
 					syncerr := optr.syncUpgradeableStatus()
 					if syncerr != nil {
