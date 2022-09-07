@@ -615,9 +615,13 @@ func (optr *Operator) isMachineConfigPoolConfigurationValid(pool *mcfgv1.Machine
 	if renderedMC.Spec.OSImageURL != osURL && renderedMC.Spec.OSImageURL != newFormatOsURL {
 		glog.Warningf("osImageURL has been overridden for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
 
-		// TODO(jkyros): what I'm going for is "if we're upgrading and we've overridden the osimageURL, that's bad, otherwise it's okay"
-		if !optr.vStore.Equal(co.Status.Versions) && cov1helpers.IsStatusConditionTrue(co.Status.Conditions, configv1.OperatorProgressing) {
-			return fmt.Errorf("osImageURL mismatch while upgrading for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
+		if co != nil {
+			// TODO(jkyros): what I'm going for is "if we're upgrading and we've overridden the osimageURL, that's bad, otherwise it's okay"
+			if !optr.vStore.Equal(co.Status.Versions) && cov1helpers.IsStatusConditionTrue(co.Status.Conditions, configv1.OperatorProgressing) {
+				return fmt.Errorf("osImageURL mismatch while upgrading for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
+			}
+		} else {
+			glog.Warningf("CO is somehow nil!? PLZ HELP")
 		}
 
 		//nolint:gocritic return fmt.Errorf("osImageURL mismatch for %s in %s expected: %s got: %s", pool.GetName(), renderedMC.Name, osURL, renderedMC.Spec.OSImageURL)
