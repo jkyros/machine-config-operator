@@ -200,6 +200,11 @@ type MachineConfigSpec struct {
 	// OSImageURL specifies the remote location that will be used to
 	// fetch the OS.
 	OSImageURL string `json:"osImageURL"`
+
+	// BaseOperatingSystemExtensionContainer specifies the remote location that will be used
+	// to fetch the extensions container matching a new-format OS image
+	BaseOperatingSystemExtensionsContainer string `json:"baseOperatingSystemExtensionsContainer"`
+
 	// Config is a Ignition Config object.
 	Config runtime.RawExtension `json:"config"`
 
