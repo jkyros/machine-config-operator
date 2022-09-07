@@ -58,7 +58,7 @@ func strToPtr(s string) *string {
 // It uses the Ignition config from first object as base and appends all the rest.
 // Kernel arguments are concatenated.
 // It defaults to the OSImageURL provided by the CVO but allows a MC provided OSImageURL to take precedence.
-func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, osImageURL string) (*mcfgv1.MachineConfig, error) {
+func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, cconfig *mcfgv1.ControllerConfig) (*mcfgv1.MachineConfig, error) {
 	if len(configs) == 0 {
 		return nil, nil
 	}
@@ -135,6 +135,8 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, osImageURL string) (*m
 			overriddenOSImageURL = cfg.Spec.OSImageURL
 		}
 	}
+
+	osImageURL := cconfig.Spec.OSImageURL
 	// Make sure it's obvious in the logs that it was overridden
 	if overriddenOSImageURL != "" && overriddenOSImageURL != osImageURL {
 		osImageURL = overriddenOSImageURL
@@ -142,8 +144,9 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, osImageURL string) (*m
 
 	return &mcfgv1.MachineConfig{
 		Spec: mcfgv1.MachineConfigSpec{
-			OSImageURL:      osImageURL,
-			KernelArguments: kargs,
+			OSImageURL:                             osImageURL,
+			BaseOperatingSystemExtensionsContainer: cconfig.Spec.BaseOperatingSystemExtensionsContainer,
+			KernelArguments:                        kargs,
 			Config: runtime.RawExtension{
 				Raw: rawOutIgn,
 			},
