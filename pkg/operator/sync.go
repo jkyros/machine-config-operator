@@ -652,17 +652,22 @@ func (optr *Operator) syncMachineConfigServer(config *renderConfig) error {
 func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 	var lastErr error
 	if err := wait.Poll(time.Second, 10*time.Minute, func() (bool, error) {
+
+		// TODO(jkyros): we used to only retrieve this if we had an error, but now we need to know if we're updating so
+		// we grab it every time. I guess we could just wait until we hit the first error if something depends on the old
+		// behavior somehow
+		co, err := optr.fetchClusterOperator()
+		if err != nil {
+			errs := kubeErrs.NewAggregate([]error{err, lastErr})
+			lastErr = fmt.Errorf("failed to fetch clusteroperator: %w", errs)
+			return false, nil
+		}
+		if co == nil {
+			glog.Warning("no clusteroperator for machine-config")
+			return false, nil
+		}
+
 		if lastErr != nil {
-			co, err := optr.fetchClusterOperator()
-			if err != nil {
-				errs := kubeErrs.NewAggregate([]error{err, lastErr})
-				lastErr = fmt.Errorf("failed to fetch clusteroperator: %w", errs)
-				return false, nil
-			}
-			if co == nil {
-				glog.Warning("no clusteroperator for machine-config")
-				return false, nil
-			}
 			optr.setOperatorStatusExtension(&co.Status, lastErr)
 			_, err = optr.configClient.ConfigV1().ClusterOperators().UpdateStatus(context.TODO(), co, metav1.UpdateOptions{})
 			if err != nil {
@@ -698,7 +703,7 @@ func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 					return false, nil
 				}
 				releaseVersion, _ := optr.vStore.Get("operator")
-				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, optr.mcLister.Get); err != nil {
+				if err := optr.isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, co); err != nil {
 					lastErr = fmt.Errorf("pool %s has not progressed to latest configuration: %w, retrying", pool.Name, err)
 					syncerr := optr.syncUpgradeableStatus()
 					if syncerr != nil {
