@@ -40,8 +40,8 @@ func TestIsMachineConfigPoolConfigurationValid(t *testing.T) {
 		source       []string
 		testurl      string
 		generated    string
-
-		err error
+		isUpgrading  bool
+		err          error
 	}{{
 		err: errors.New("configuration spec for pool dummy-pool is empty: <unknown>"),
 	}, {
@@ -119,23 +119,42 @@ func TestIsMachineConfigPoolConfigurationValid(t *testing.T) {
 		generated: "g",
 		//err:       errors.New("osImageURL mismatch for dummy-pool in g expected: myurl got: wrongurl"),
 		err: nil,
-	}, {
-		knownConfigs: []config{{
-			name:           "g",
-			version:        "v2",
-			releaseVersion: "rv1",
+	},
+		{
+			// When we're upgrading, we should care abot OSImageURL, but not when we aren't because we allow overrides
+			knownConfigs: []config{{
+				name:           "g",
+				version:        "v2",
+				releaseVersion: "rv2",
+			}, {
+				name:           "c-0",
+				version:        "v2",
+				releaseVersion: "rv2",
+			}, {
+				name: "u-0",
+			}},
+			source:      []string{"c-0", "u-0"},
+			testurl:     "wrongurl",
+			generated:   "g",
+			isUpgrading: true,
+			err:         errors.New("osImageURL mismatch while upgrading for dummy-pool in g expected: myurl got: wrongurl"),
 		}, {
-			name:           "c-0",
-			version:        "v2",
-			releaseVersion: "rv1",
-		}, {
-			name: "u-0",
-		}},
-		source:    []string{"c-0", "u-0"},
-		testurl:   "myurl",
-		generated: "g",
-		err:       errors.New("release image version mismatch for dummy-pool in g expected: rv2 got: rv1"),
-	}}
+			knownConfigs: []config{{
+				name:           "g",
+				version:        "v2",
+				releaseVersion: "rv1",
+			}, {
+				name:           "c-0",
+				version:        "v2",
+				releaseVersion: "rv1",
+			}, {
+				name: "u-0",
+			}},
+			source:    []string{"c-0", "u-0"},
+			testurl:   "myurl",
+			generated: "g",
+			err:       errors.New("release image version mismatch for dummy-pool in g expected: rv2 got: rv1"),
+		}}
 
 	for idx, test := range tests {
 		t.Run(fmt.Sprintf("case #%d", idx), func(t *testing.T) {
@@ -176,7 +195,7 @@ func TestIsMachineConfigPoolConfigurationValid(t *testing.T) {
 				Status: mcfgv1.MachineConfigPoolStatus{
 					Configuration: mcfgv1.MachineConfigPoolStatusConfiguration{ObjectReference: corev1.ObjectReference{Name: test.generated}, Source: source},
 				},
-			}, "v2", "rv2", "mynewurl", "myurl", getter)
+			}, "v2", "rv2", "mynewurl", "myurl", getter, test.isUpgrading)
 			if !reflect.DeepEqual(err, test.err) {
 				t.Fatalf("expected %v got %v", test.err, err)
 			}

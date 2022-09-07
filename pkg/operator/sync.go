@@ -39,6 +39,8 @@ import (
 	daemonconsts "github.com/openshift/machine-config-operator/pkg/daemon/constants"
 	"github.com/openshift/machine-config-operator/pkg/server"
 	"github.com/openshift/machine-config-operator/pkg/version"
+
+	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
 )
 
 const (
@@ -652,17 +654,22 @@ func (optr *Operator) syncMachineConfigServer(config *renderConfig) error {
 func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 	var lastErr error
 	if err := wait.Poll(time.Second, 10*time.Minute, func() (bool, error) {
+
+		// TODO(jkyros): we used to only retrieve this if we had an error, but now we need to know if we're updating so
+		// we grab it every time. I guess we could just wait until we hit the first error if something depends on the old
+		// behavior somehow
+		co, err := optr.fetchClusterOperator()
+		if err != nil {
+			errs := kubeErrs.NewAggregate([]error{err, lastErr})
+			lastErr = fmt.Errorf("failed to fetch clusteroperator: %w", errs)
+			return false, nil
+		}
+		if co == nil {
+			glog.Warning("no clusteroperator for machine-config")
+			return false, nil
+		}
+
 		if lastErr != nil {
-			co, err := optr.fetchClusterOperator()
-			if err != nil {
-				errs := kubeErrs.NewAggregate([]error{err, lastErr})
-				lastErr = fmt.Errorf("failed to fetch clusteroperator: %w", errs)
-				return false, nil
-			}
-			if co == nil {
-				glog.Warning("no clusteroperator for machine-config")
-				return false, nil
-			}
 			optr.setOperatorStatusExtension(&co.Status, lastErr)
 			_, err = optr.configClient.ConfigV1().ClusterOperators().UpdateStatus(context.TODO(), co, metav1.UpdateOptions{})
 			if err != nil {
@@ -697,8 +704,18 @@ func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 					glog.Errorf("Error getting configmap osImageURL: %q", err)
 					return false, nil
 				}
+
+				// TODO(jkyros): The idea here is to figure out if we're updating because I *think* right now
+				// (until we have our fancy custom build inspection stuff) that we want to degrade if someone upgrades while
+				// they have osImageURL overridden (because otherwise we'd be lying about the upgrade being 'complete'? )
+				// Then again...maybe we do just let it go regardless if it's overridden since they "took the wheel"?
+				var isUpgrading bool
+				if !optr.vStore.Equal(co.Status.Versions) && cov1helpers.IsStatusConditionTrue(co.Status.Conditions, configv1.OperatorProgressing) {
+					isUpgrading = true
+				}
+
 				releaseVersion, _ := optr.vStore.Get("operator")
-				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, optr.mcLister.Get); err != nil {
+				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, optr.mcLister.Get, isUpgrading); err != nil {
 					lastErr = fmt.Errorf("pool %s has not progressed to latest configuration: %w, retrying", pool.Name, err)
 					syncerr := optr.syncUpgradeableStatus()
 					if syncerr != nil {
