@@ -709,8 +709,10 @@ func (optr *Operator) syncMachineConfigServer(config *renderConfig) error {
 func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 	var lastErr error
 	if err := wait.Poll(time.Second, 10*time.Minute, func() (bool, error) {
+		var co *configv1.ClusterOperator
+		var err error
 		if lastErr != nil {
-			co, err := optr.fetchClusterOperator()
+			co, err = optr.fetchClusterOperator()
 			if err != nil {
 				errs := kubeErrs.NewAggregate([]error{err, lastErr})
 				lastErr = fmt.Errorf("failed to fetch clusteroperator: %w", errs)
@@ -755,7 +757,7 @@ func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 					return false, nil
 				}
 				releaseVersion, _ := optr.vStore.Get("operator")
-				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, optr.mcLister.Get); err != nil {
+				if err := optr.isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, co); err != nil {
 					lastErr = fmt.Errorf("pool %s has not progressed to latest configuration: %w, retrying", pool.Name, err)
 					syncerr := optr.syncUpgradeableStatus()
 					if syncerr != nil {
