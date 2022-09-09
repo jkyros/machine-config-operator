@@ -593,6 +593,7 @@ func generateRenderedMachineConfig(pool *mcfgv1.MachineConfigPool, configs []*mc
 	// Make it obvious that the OSImageURL has been overridden. If we log this in MergeMachineConfigs, we don't know the name yet, so we're
 	// logging out here instead so it's actually helpful.
 	if merged.Spec.OSImageURL != defaultOSImageURL {
+		merged.Annotations[ctrlcommon.OSImageURLOverriddenKey] = "true"
 		glog.Infof("OSImageURL has been overridden via machineconfig in %s (was: %s is: %s)", merged.Name, cconfig.Spec.OSImageURL, merged.Spec.OSImageURL)
 	}
 

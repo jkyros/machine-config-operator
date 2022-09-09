@@ -10,6 +10,8 @@ const (
 	// ReleaseImageVersionAnnotationKey is used to tag the rendered machineconfigs & controller config with the release image version.
 	ReleaseImageVersionAnnotationKey = "machineconfiguration.openshift.io/release-image-version"
 
+	OSImageURLOverriddenKey = "machineconfiguration.openshift.io/os-image-url-overridden"
+
 	// ControllerConfigName is the name of the ControllerConfig object that controllers use
 	ControllerConfigName = "machine-config-controller"
 
