@@ -563,7 +563,7 @@ func (optr *Operator) allMachineConfigPoolStatus() (map[string]string, error) {
 
 // isMachineConfigPoolConfigurationValid returns nil, or error when the configuration of a `pool` is created by the controller at version `version`,
 // when the osImageURL does not match what's in the configmap or when the rendered-config-xxx does not match the OCP release version.
-func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, version, releaseVersion, newFormatOsURL, osURL string, machineConfigGetter func(string) (*mcfgv1.MachineConfig, error)) error {
+func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, version, releaseVersion, osURL string, machineConfigGetter func(string) (*mcfgv1.MachineConfig, error)) error {
 	// both .status.configuration.name and .status.configuration.source must be set.
 	if pool.Spec.Configuration.Name == "" {
 		return fmt.Errorf("configuration spec for pool %s is empty: %v", pool.GetName(), machineConfigPoolStatus(pool))
@@ -613,7 +613,7 @@ func isMachineConfigPoolConfigurationValid(pool *mcfgv1.MachineConfigPool, versi
 	// TODO(jkyros): For "Phase 0" layering, we're going to allow this check to pass once the user has "taken the wheel" by overriding OSImageURL.
 	// We will find a way to make this more visible to the user somewhere since the MCO is kind of "lying" about completing the
 	// upgrade to the new os version otherwise.
-	if renderedMC.Spec.OSImageURL != osURL && renderedMC.Spec.OSImageURL != newFormatOsURL {
+	if renderedMC.Spec.OSImageURL != osURL {
 		// If we didn't override OSImageURL, this is still bad, because it means that we aren't on the proper OS image yet
 		_, ok := renderedMC.Annotations[ctrlcommon.OSImageURLOverriddenKey]
 		if !ok {

@@ -698,7 +698,13 @@ func (optr *Operator) syncRequiredMachineConfigPools(_ *renderConfig) error {
 					return false, nil
 				}
 				releaseVersion, _ := optr.vStore.Get("operator")
-				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, newFormatOpURL, optr.mcLister.Get); err != nil {
+				// TODO(jkyros): The operator looks at the osimageurl configmap directly, so we can't use
+				// our centralized default image selection helper, but we can still use the constant.
+				// This will come out once we drop machine-os-content.
+				if ctrlcommon.UseNewFormatImageByDefault {
+					opURL = newFormatOpURL
+				}
+				if err := isMachineConfigPoolConfigurationValid(pool, version.Hash, releaseVersion, opURL, optr.mcLister.Get); err != nil {
 					lastErr = fmt.Errorf("pool %s has not progressed to latest configuration: %w, retrying", pool.Name, err)
 					syncerr := optr.syncUpgradeableStatus()
 					if syncerr != nil {

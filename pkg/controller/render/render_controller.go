@@ -488,7 +488,11 @@ func (ctrl *Controller) syncGeneratedMachineConfig(pool *mcfgv1.MachineConfigPoo
 	}
 
 	// Emit an event so it's more visible that OSImageURL was overridden.
-	if generated.Spec.OSImageURL != cc.Spec.OSImageURL {
+	osImageURL := cc.Spec.OSImageURL
+	if cc.Spec.BaseOperatingSystemContainer != "" && cc.Spec.BaseOperatingSystemExtensionsContainer != "" {
+		osImageURL = cc.Spec.BaseOperatingSystemContainer
+	}
+	if generated.Spec.OSImageURL != osImageURL {
 		ctrl.eventRecorder.Eventf(generated, corev1.EventTypeNormal, "OSImageURLOverridden", "OSImageURL was overridden via machineconfig in %s (was: %s is: %s)", generated.Name, cc.Spec.OSImageURL, generated.Spec.OSImageURL)
 	}
 
@@ -563,15 +567,6 @@ func generateRenderedMachineConfig(pool *mcfgv1.MachineConfigPool, configs []*mc
 		}
 	}
 
-	// If our new image formats are populated
-	// TODO(jkyros): "properly" feature gate this? This is kind of a 'soft' gate based on the presence of extensions container,
-	// which is not currently present by default
-	var defaultOSImageURL = cconfig.Spec.OSImageURL
-	if cconfig.Spec.BaseOperatingSystemContainer != "" && cconfig.Spec.BaseOperatingSystemExtensionsContainer != "" {
-		glog.Infof("Defaulting to new format image because extensions container is present")
-		defaultOSImageURL = cconfig.Spec.BaseOperatingSystemContainer
-	}
-
 	merged, err := ctrlcommon.MergeMachineConfigs(configs, cconfig)
 	if err != nil {
 		return nil, err
@@ -590,11 +585,11 @@ func generateRenderedMachineConfig(pool *mcfgv1.MachineConfigPool, configs []*mc
 	merged.Annotations[ctrlcommon.GeneratedByControllerVersionAnnotationKey] = version.Hash
 	merged.Annotations[ctrlcommon.ReleaseImageVersionAnnotationKey] = cconfig.Annotations[ctrlcommon.ReleaseImageVersionAnnotationKey]
 
-	// Make it obvious that the OSImageURL has been overridden. If we log this in MergeMachineConfigs, we don't know the name yet, so we're
-	// logging out here instead so it's actually helpful.
-	if merged.Spec.OSImageURL != defaultOSImageURL {
+	// The operator needs to know the user overrode this, so it knows if it needs to skip the
+	// OSImageURL check during upgrade -- if the user took over managing OS upgrades this way,
+	// the operator shouldn't stop the rest of the upgrade from progressing/completing.
+	if merged.Spec.OSImageURL != ctrlcommon.GetDefaultBaseImageContainer(&cconfig.Spec) {
 		merged.Annotations[ctrlcommon.OSImageURLOverriddenKey] = "true"
-		glog.Infof("OSImageURL has been overridden via machineconfig in %s (was: %s is: %s)", merged.Name, cconfig.Spec.OSImageURL, merged.Spec.OSImageURL)
 	}
 
 	return merged, nil

@@ -199,7 +199,7 @@ func TestIsMachineConfigPoolConfigurationValid(t *testing.T) {
 				Status: mcfgv1.MachineConfigPoolStatus{
 					Configuration: mcfgv1.MachineConfigPoolStatusConfiguration{ObjectReference: corev1.ObjectReference{Name: test.generated}, Source: source},
 				},
-			}, "v2", "rv2", "mynewurl", "myurl", getter)
+			}, "v2", "rv2", "myurl", getter)
 			if !reflect.DeepEqual(err, test.err) {
 				t.Fatalf("expected %v got %v", test.err, err)
 			}

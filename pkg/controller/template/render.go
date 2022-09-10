@@ -299,8 +299,8 @@ func generateMachineConfigForName(config *RenderConfig, role, name, templateDir,
 	// config, but resourcemerge doesn't blank this field out once it's populated
 	// so if you end up on a cluster where it was ever populated in this machineconfig, it
 	// will keep that last value forever once you upgrade...which is a problen now that we allow OSImageURL overrides
-	// because it will look like an override when it shouldn't be. So don't take this out until you've solved that. .
-	mcfg.Spec.OSImageURL = config.OSImageURL
+	// because it will look like an override when it shouldn't be. So don't take this out until you've solved that.
+	mcfg.Spec.OSImageURL = ctrlcommon.GetDefaultBaseImageContainer(config.ControllerConfigSpec)
 
 	return mcfg, nil
 }
