@@ -296,20 +296,9 @@ func (r *RpmOstreeClient) IsBootableImage(imgURL string) (bool, error) {
 	var imageData *types.ImageInspectInfo
 	var err error
 	if imageData, err = imageInspect(imgURL); err != nil {
-		if err != nil {
-			var podmanImgData *imageInspection
-			glog.Infof("Falling back to using podman inspect")
-
-			if podmanImgData, err = podmanInspect(imgURL); err != nil {
-				return false, err
-			}
-			isBootableImage = podmanImgData.Labels["ostree.bootable"]
-		}
-	} else {
-		isBootableImage = imageData.Labels["ostree.bootable"]
+		return false, err
 	}
-	// We may have pulled in OSContainer image as fallback during podmanCopy() or podmanInspect()
-	defer exec.Command("podman", "rmi", imgURL).Run()
+	isBootableImage = imageData.Labels["ostree.bootable"]
 
 	return isBootableImage == "true", nil
 }
