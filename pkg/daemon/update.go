@@ -591,6 +591,20 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig) (retErr err
 		}
 	}()
 
+	if err := dn.updatePasswordHash(newIgnConfig.Passwd.Users); err != nil {
+		return err
+	}
+
+	defer func() {
+		if retErr != nil {
+			if err := dn.updatePasswordHash(oldIgnConfig.Passwd.Users); err != nil {
+				errs := kubeErrs.NewAggregate([]error{err, retErr})
+				retErr = fmt.Errorf("error rolling back SSH keys updates: %w", errs)
+				return
+			}
+		}
+	}()
+
 	if err := dn.updateSSHKeys(newIgnConfig.Passwd.Users); err != nil {
 		return err
 	}
@@ -933,8 +947,11 @@ func verifyUserFields(pwdUser ign3types.PasswdUser) error {
 	emptyUser := ign3types.PasswdUser{}
 	tempUser := pwdUser
 	if tempUser.Name == constants.CoreUserName && len(tempUser.SSHAuthorizedKeys) >= 1 {
+		// This blanks all the fields we allow setting, if anything else is set, it's an error
 		tempUser.Name = ""
 		tempUser.SSHAuthorizedKeys = nil
+		tempUser.PasswordHash = nil
+
 		if !reflect.DeepEqual(emptyUser, tempUser) {
 			return fmt.Errorf("ignition passwd user section contains unsupported changes: non-sshKey changes")
 		}
@@ -1821,6 +1838,44 @@ func (dn *Daemon) atomicallyWriteSSHKey(keys string) error {
 	}
 
 	glog.V(2).Infof("Wrote SSHKeys at %s", authKeyPath)
+
+	return nil
+}
+
+// Update a given PasswdUser's PasswordHash
+func (dn *Daemon) updatePasswordHash(newUsers []ign3types.PasswdUser) error {
+	if len(newUsers) == 0 {
+		return nil
+	}
+
+	var uErr user.UnknownUserError
+	switch _, err := user.Lookup(constants.CoreUserName); {
+	case err == nil:
+	case errors.As(err, &uErr):
+		glog.Info("core user does not exist, and creating users is not supported, so ignoring configuration specified for core user")
+		return nil
+	default:
+		return fmt.Errorf("failed to check if user core exists: %w", err)
+	}
+
+	if !dn.mock {
+		for _, u := range newUsers {
+			// If this is the core user (the only one we support)
+			if u.Name == constants.CoreUserName {
+				// And we've specified a password hash
+				if u.PasswordHash != nil {
+					glog.Infof("Setting password for user %s", u.Name)
+					// Then use usermod to change it
+					// TODO(jkyros): It would be nice to use the code from ignition itself, but
+					// it's internal. Maybe when we do layering we can use ignition-apply on the image?
+					// TODO(jkyros): what about config drift + someone supplying their own /etc/shadow?
+					if out, err := exec.Command("usermod", "-p", *u.PasswordHash, u.Name).CombinedOutput(); err != nil {
+						return fmt.Errorf("Failed to change password for %s: %s:%w", u.Name, out, err)
+					}
+				}
+			}
+		}
+	}
 
 	return nil
 }
