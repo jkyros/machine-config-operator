@@ -433,7 +433,8 @@ func (ctrl *Controller) logPoolNode(pool *mcfgv1.MachineConfigPool, node *corev1
 	if zok {
 		zonemsg = fmt.Sprintf("[zone=%s]", zone)
 	}
-	glog.Infof("Pool %s%s: node %s: %s", pool.Name, zonemsg, node.Name, msg)
+
+	glog.Infof("Pool %s%s: node %s: %s", ctrlcommon.PoolNameIfNotNil(pool), zonemsg, node.Name, msg)
 }
 
 func (ctrl *Controller) updateNode(old, cur interface{}) {
@@ -453,17 +454,27 @@ func (ctrl *Controller) updateNode(old, cur interface{}) {
 		glog.Errorf("error finding pool for node: %v", err)
 		return
 	}
-	if pool == nil {
-		return
-	}
+
 	glog.V(4).Infof("Node %s updated", curNode.Name)
 
 	// Let's be verbose when a node changes pool
 	oldPool, err := ctrl.getPrimaryPoolForNode(oldNode)
-	if err == nil && oldPool.Name != pool.Name {
-		ctrl.logPoolNode(pool, curNode, "changed from pool %s", oldPool.Name)
-		// Let's also make sure the old pool node counts/status get updated
-		ctrl.enqueueMachineConfigPool(oldPool)
+	if err == nil && ctrlcommon.PoolNameIfNotNil(oldPool) != ctrlcommon.PoolNameIfNotNil(pool) {
+		// we historically only logged the primary pool of the node entering/exiting, so
+		// that's why this doesn't currently get logged with the old pool enqueues below
+		ctrl.logPoolNode(pool, curNode, "changed from pool %s", ctrlcommon.PoolNameIfNotNil(oldPool))
+	}
+
+	// Let's also make sure the old pool node counts/status get updated if it was in a pool
+	oldPools, err := ctrl.getPoolsForNode(oldNode)
+	if err == nil {
+		for _, oldPool := range oldPools {
+			ctrl.enqueueMachineConfigPool(oldPool)
+		}
+	}
+
+	if pool == nil {
+		return
 	}
 
 	var changed bool

@@ -1023,3 +1023,12 @@ func ReadDir(path string) ([]fs.FileInfo, error) {
 	}
 	return infos, nil
 }
+
+// PoolNameIfNotNill returns the pool name if the pool is not nil, or "<none>" if the pool object is nil. It is used to
+// safely log our pool transitions without panics due to nil pools.
+func PoolNameIfNotNil(pool *mcfgv1.MachineConfigPool) string {
+	if pool != nil {
+		return pool.Name
+	}
+	return "<none>"
+}
