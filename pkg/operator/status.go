@@ -297,6 +297,7 @@ func (optr *Operator) syncUpgradeableStatus() error {
 		Status: configv1.ConditionTrue,
 		Reason: asExpectedReason,
 	}
+
 	var updating, degraded bool
 	for _, pool := range pools {
 		// collect updating status but continue to check each pool to see if any pool is degraded
@@ -353,6 +354,25 @@ func (optr *Operator) syncUpgradeableStatus() error {
 		}
 	}
 	return optr.updateStatus(co, coStatus)
+}
+
+func (optr *Operator) syncMetrics() error {
+	pools, err := optr.mcpLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	// set metrics per pool
+	for _, pool := range pools {
+		strConditions := []string{pool.Name}
+		for _, condition := range pool.Status.Conditions {
+			strConditions = append(strConditions, string(condition.Type))
+		}
+		mcoState.WithLabelValues(strConditions...).SetToCurrentTime()
+		mcoMachineCount.WithLabelValues(pool.Name).Set(float64(pool.Status.MachineCount))
+		mcoUpdatedMachineCount.WithLabelValues(pool.Name).Set(float64(pool.Status.UpdatedMachineCount))
+		mcoDegradedMachineCount.WithLabelValues(pool.Name).Set(float64(pool.Status.DegradedMachineCount))
+	}
+	return nil
 }
 
 // isKubeletSkewSupported checks the version skew of kube-apiserver and node kubelet version.

@@ -155,6 +155,10 @@ func (optr *Operator) syncAll(syncFuncs []syncFunc) error {
 		return fmt.Errorf("error syncing relatedObjects: %w", err)
 	}
 
+	if err := optr.syncMetrics(); err != nil {
+		return fmt.Errorf("error syncing metrics: %w", err)
+	}
+
 	if optr.inClusterBringup && syncErr.err == nil {
 		glog.Infof("Initialization complete")
 		optr.inClusterBringup = false

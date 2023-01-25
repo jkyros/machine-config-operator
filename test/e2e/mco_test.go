@@ -3,13 +3,17 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang/glog"
 	ctrlcommon "github.com/openshift/machine-config-operator/pkg/controller/common"
 	"github.com/openshift/machine-config-operator/pkg/controller/node"
+	e2e_shared_test "github.com/openshift/machine-config-operator/test/e2e-shared-tests"
 	"github.com/openshift/machine-config-operator/test/framework"
+	"github.com/openshift/machine-config-operator/test/helpers"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,4 +135,52 @@ func TestClusterOperatorStatusExtension(t *testing.T) {
 	v, ok := coExt["test"]
 	require.True(t, ok)
 	require.Equal(t, "extension", v)
+}
+
+func TestMetrics(t *testing.T) {
+	cs := framework.NewClientSet("")
+	_, err := cs.ClusterOperators().Get(context.TODO(), "machine-config", metav1.GetOptions{})
+	require.Nil(t, err)
+	// Create infra pool to roll out MC changes
+	_ = helpers.LabelRandomNodeFromPool(t, cs, "worker", "node-role.kubernetes.io/infra")
+	helpers.CreateMCP(t, cs, "infra")
+
+	// create old mc to have something to verify we successfully rolled back
+	oldInfraConfig := helpers.CreateMC("old-infra", "infra")
+	_, err = cs.MachineConfigs().Create(context.TODO(), oldInfraConfig, metav1.CreateOptions{})
+	require.Nil(t, err)
+	oldInfraRenderedConfig, err := helpers.WaitForRenderedConfig(t, cs, "infra", oldInfraConfig.Name)
+	err = helpers.WaitForPoolComplete(t, cs, "infra", oldInfraRenderedConfig)
+	require.Nil(t, err)
+
+	//node, err := cs.CoreV1Interface.Nodes().Get(context.TODO(), "infra", metav1.GetOptions{})
+	node := helpers.GetSingleNodeByRole(t, cs, "infra")
+	require.Nil(t, err)
+
+	// Get the machine config pool
+	mcp, err := cs.MachineConfigPools().Get(context.TODO(), "infra", metav1.GetOptions{})
+	require.Nil(t, err)
+
+	e2e_shared_test.MutateNodeAndWait(t, cs, &node, mcp)
+
+	svc, err := cs.Services("openshift-machine-config-operator").Get(context.TODO(), "machine-config-operator", metav1.GetOptions{})
+	require.Nil(t, err)
+
+	// Extract the IP and port and build the URL
+	requestTarget := svc.Spec.ClusterIP
+	requestPort := svc.Spec.Ports[0].Port
+	url := fmt.Sprintf("https://%s:%d/metrics", requestTarget, requestPort)
+
+	t.Logf("Getting monitoring token")
+	token, err := helpers.GetMonitoringToken(t, cs)
+	require.Nil(t, err)
+
+	out := helpers.ExecCmdOnNode(t, cs, node, []string{"curl", "-s", "-k", "-H", "Authorization: Bearer " + string(token), url}...)
+
+	// The /metrics output will contain the metric if it works
+	if !strings.Contains(out, `mco_degraded_machine_count{pool="`+mcp.Name+`"} 1`) {
+		t.Errorf("Metric should have been set after configuration was paused, but it was NOT")
+	} else {
+		t.Log("Metric successfully set")
+	}
 }

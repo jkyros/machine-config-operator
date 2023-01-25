@@ -16,6 +16,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+func MutateNodeAndWait(t *testing.T, cs *framework.ClientSet, node *corev1.Node, pool *mcfgv1.MachineConfigPool) {
+	mutateFileOnNode(t, cs, *node, "/etc/containers/storage.conf", "wrong")
+	assertNodeAndMCPIsDegraded(t, cs, *node, *pool, "/etc/containers/storage.conf")
+}
+
 func waitForConfigDriftMonitorStart(t *testing.T, cs *framework.ClientSet, node corev1.Node) {
 	t.Helper()
 
