@@ -264,7 +264,7 @@ func (optr *Operator) syncRenderConfig(_ *renderConfig) error {
 	// if bootstrapComplete happens while inClusterBringup == true, that matching MachineConfig will never get rendered and
 	// our pools will degrade (because the machine-config-daemon checks for it).
 	// See: https://issues.redhat.com/browse/OCPBUGS-5888
-	if bootstrapComplete && !optr.inClusterBringup {
+	if bootstrapComplete {
 		// This is the ca-bundle published by the kube-apiserver that is used terminate client-certificates in the kube cluster.
 		// If the kubelet has a flag to check the in-cluster published ca bundle, that would be ideal.
 		kubeAPIServerServingCABytes, err = optr.getCAsFromConfigMap("openshift-config-managed", "kube-apiserver-client-ca", "ca-bundle.crt")
@@ -601,6 +601,25 @@ func (optr *Operator) safetySyncControllerConfig(config *renderConfig) error {
 // the operator version and controller version match. We can call it from safetySyncControllerConfig
 // because safetySyncControllerConfig ensures that the operator and controller versions match before it syncs.
 func (optr *Operator) syncControllerConfig(config *renderConfig) error {
+	bootstrapComplete := false
+	_, err := optr.clusterCmLister.ConfigMaps("kube-system").Get("bootstrap")
+	switch {
+	case err == nil:
+		bootstrapComplete = true
+	case apierrors.IsNotFound(err):
+		bootstrapComplete = false
+	case err != nil:
+		return err
+	default:
+		panic("math broke")
+	}
+	if !bootstrapComplete {
+		return fmt.Errorf("Delaying until bootstrap complete")
+	} else {
+		glog.Infof("Bootstrap is complete, now we can render our controllerconfig")
+		<-time.After(60 * time.Second)
+	}
+
 	ccBytes, err := renderAsset(config, "manifests/machineconfigcontroller/controllerconfig.yaml")
 	if err != nil {
 		return err
