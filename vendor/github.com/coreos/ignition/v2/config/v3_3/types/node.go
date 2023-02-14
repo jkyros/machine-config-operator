@@ -15,30 +15,45 @@
 package types
 
 import (
+	"path"
+
 	"github.com/coreos/ignition/v2/config/shared/errors"
 	"github.com/coreos/ignition/v2/config/util"
 
-	"github.com/coreos/vcontext/path"
+	vpath "github.com/coreos/vcontext/path"
 	"github.com/coreos/vcontext/report"
 )
 
-func (f File) Validate(c path.ContextPath) (r report.Report) {
-	r.Merge(f.Node.Validate(c))
-	r.AddOnError(c.Append("mode"), validateMode(f.Mode))
-	r.AddOnWarn(c.Append("mode"), validateModeSpecialBits(f.Mode))
-	r.AddOnError(c.Append("overwrite"), f.validateOverwrite())
+func (n Node) Key() string {
+	return n.Path
+}
+
+func (n Node) Validate(c vpath.ContextPath) (r report.Report) {
+	r.AddOnError(c.Append("path"), validatePath(n.Path))
 	return
 }
 
-func (f File) validateOverwrite() error {
-	if util.IsTrue(f.Overwrite) && f.Contents.Source == nil {
-		return errors.ErrOverwriteAndNilSource
+func (n Node) Depth() int {
+	count := 0
+	for p := path.Clean(string(n.Path)); p != "/"; count++ {
+		p = path.Dir(p)
+	}
+	return count
+}
+
+func validateIDorName(id *int, name *string) error {
+	if id != nil && util.NotEmpty(name) {
+		return errors.ErrBothIDAndNameSet
 	}
 	return nil
 }
 
-func (f FileEmbedded1) IgnoreDuplicates() map[string]struct{} {
-	return map[string]struct{}{
-		"Append": {},
-	}
+func (nu NodeUser) Validate(c vpath.ContextPath) (r report.Report) {
+	r.AddOnError(c, validateIDorName(nu.ID, nu.Name))
+	return
+}
+
+func (ng NodeGroup) Validate(c vpath.ContextPath) (r report.Report) {
+	r.AddOnError(c, validateIDorName(ng.ID, ng.Name))
+	return
 }

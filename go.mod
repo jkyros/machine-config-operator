@@ -7,16 +7,16 @@ require (
 	github.com/InVisionApp/go-health v2.1.0+incompatible
 	github.com/apparentlymart/go-cidr v1.0.0
 	github.com/ashcrow/osrelease v0.0.0-20180626175927-9b292693c55c
-	github.com/clarketm/json v1.14.1
+	github.com/clarketm/json v1.17.1
 	github.com/containers/common v0.50.1
 	github.com/containers/image/v5 v5.23.0
 	github.com/containers/kubensmnt v1.2.0
 	github.com/containers/storage v1.43.0
 	github.com/coreos/fcct v0.5.0
 	github.com/coreos/go-semver v0.3.0
-	github.com/coreos/ign-converter v0.0.0-20201123214124-8dac862888aa
+	github.com/coreos/ign-converter v0.0.0-20230208213950-5348bb20b632
 	github.com/coreos/ignition v0.35.0
-	github.com/coreos/ignition/v2 v2.13.0
+	github.com/coreos/ignition/v2 v2.14.0
 	github.com/coreos/rpmostree-client-go v0.0.0-20221107202527-a917fe095845
 	github.com/davecgh/go-spew v1.1.1
 	github.com/fsnotify/fsnotify v1.5.4
@@ -33,7 +33,7 @@ require (
 	github.com/openshift/runtime-utils v0.0.0-20220926190846-5c488b20a19f
 	github.com/prometheus/client_golang v1.13.0
 	github.com/spf13/cobra v1.5.0
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/pflag v1.0.6-0.20210604193023-d5e0c0615ace
 	github.com/stretchr/testify v1.8.1
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/net v0.0.0-20220909164309-bea034e7d591
@@ -66,7 +66,7 @@ require (
 	github.com/OpenPeeDeeP/depguard v1.1.0 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
-	github.com/ajeddeloh/go-json v0.0.0-20170920214419-6a2fe990e083 // indirect
+	github.com/ajeddeloh/go-json v0.0.0-20200220154158-5ae607161559 // indirect
 	github.com/alexkohler/prealloc v1.0.0 // indirect
 	github.com/alingse/asasalint v0.0.11 // indirect
 	github.com/ashanbrown/forbidigo v1.3.0 // indirect

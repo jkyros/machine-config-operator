@@ -1,4 +1,4 @@
-// Copyright 2017 CoreOS, Inc.
+// Copyright 2020 Red Hat, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,13 +15,35 @@
 package types
 
 import (
+	"github.com/coreos/go-semver/semver"
+
+	"github.com/coreos/ignition/v2/config/shared/errors"
+
 	"github.com/coreos/vcontext/path"
 	"github.com/coreos/vcontext/report"
 )
 
-func (d Directory) Validate(c path.ContextPath) (r report.Report) {
-	r.Merge(d.Node.Validate(c))
-	r.AddOnError(c.Append("mode"), validateMode(d.Mode))
-	r.AddOnWarn(c.Append("mode"), validateModeSpecialBits(d.Mode))
+func (v Ignition) Semver() (*semver.Version, error) {
+	return semver.NewVersion(v.Version)
+}
+
+func (ic IgnitionConfig) Validate(c path.ContextPath) (r report.Report) {
+	for i, res := range ic.Merge {
+		r.AddOnError(c.Append("merge", i), res.validateRequiredSource())
+	}
+	return
+}
+
+func (v Ignition) Validate(c path.ContextPath) (r report.Report) {
+	c = c.Append("version")
+	tv, err := v.Semver()
+	if err != nil {
+		r.AddOnError(c, errors.ErrInvalidVersion)
+		return
+	}
+
+	if MaxVersion != *tv {
+		r.AddOnError(c, errors.ErrUnknownVersion)
+	}
 	return
 }

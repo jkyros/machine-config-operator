@@ -47,7 +47,7 @@ github.com/PuerkitoBio/purell
 # github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578
 ## explicit
 github.com/PuerkitoBio/urlesc
-# github.com/ajeddeloh/go-json v0.0.0-20170920214419-6a2fe990e083
+# github.com/ajeddeloh/go-json v0.0.0-20200220154158-5ae607161559
 ## explicit
 github.com/ajeddeloh/go-json
 # github.com/alexkohler/prealloc v1.0.0
@@ -109,7 +109,7 @@ github.com/charithe/durationcheck
 # github.com/chavacava/garif v0.0.0-20220630083739-93517212f375
 ## explicit; go 1.16
 github.com/chavacava/garif
-# github.com/clarketm/json v1.14.1
+# github.com/clarketm/json v1.17.1
 ## explicit
 github.com/clarketm/json
 # github.com/containers/common v0.50.1
@@ -192,11 +192,12 @@ github.com/coreos/go-systemd/unit
 # github.com/coreos/go-systemd/v22 v22.4.0
 ## explicit; go 1.12
 github.com/coreos/go-systemd/v22/unit
-# github.com/coreos/ign-converter v0.0.0-20201123214124-8dac862888aa
-## explicit; go 1.13
+# github.com/coreos/ign-converter v0.0.0-20230208213950-5348bb20b632
+## explicit; go 1.18
 github.com/coreos/ign-converter/translate/v23tov30
 github.com/coreos/ign-converter/translate/v32tov22
 github.com/coreos/ign-converter/translate/v32tov31
+github.com/coreos/ign-converter/translate/v33tov32
 github.com/coreos/ign-converter/util
 # github.com/coreos/ignition v0.35.0
 ## explicit
@@ -218,7 +219,7 @@ github.com/coreos/ignition/config/validate
 github.com/coreos/ignition/config/validate/astjson
 github.com/coreos/ignition/config/validate/astnode
 github.com/coreos/ignition/config/validate/report
-# github.com/coreos/ignition/v2 v2.13.0
+# github.com/coreos/ignition/v2 v2.14.0
 ## explicit; go 1.15
 github.com/coreos/ignition/v2/config/merge
 github.com/coreos/ignition/v2/config/shared/errors
@@ -233,6 +234,9 @@ github.com/coreos/ignition/v2/config/v3_1/types
 github.com/coreos/ignition/v2/config/v3_2
 github.com/coreos/ignition/v2/config/v3_2/translate
 github.com/coreos/ignition/v2/config/v3_2/types
+github.com/coreos/ignition/v2/config/v3_3
+github.com/coreos/ignition/v2/config/v3_3/translate
+github.com/coreos/ignition/v2/config/v3_3/types
 github.com/coreos/ignition/v2/config/validate
 # github.com/coreos/rpmostree-client-go v0.0.0-20221107202527-a917fe095845
 ## explicit; go 1.17
@@ -1006,7 +1010,7 @@ github.com/spf13/cobra
 # github.com/spf13/jwalterweatherman v1.1.0
 ## explicit
 github.com/spf13/jwalterweatherman
-# github.com/spf13/pflag v1.0.5
+# github.com/spf13/pflag v1.0.6-0.20210604193023-d5e0c0615ace
 ## explicit; go 1.12
 github.com/spf13/pflag
 # github.com/spf13/viper v1.12.0
