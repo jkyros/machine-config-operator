@@ -32,6 +32,7 @@ import (
 	ign2_3 "github.com/coreos/ignition/config/v2_3"
 	validate2 "github.com/coreos/ignition/config/validate"
 	ign3error "github.com/coreos/ignition/v2/config/shared/errors"
+	ign3errors "github.com/coreos/ignition/v2/config/shared/errors"
 	ign3_1 "github.com/coreos/ignition/v2/config/v3_1"
 	translate3_1 "github.com/coreos/ignition/v2/config/v3_1/translate"
 	ign3_1types "github.com/coreos/ignition/v2/config/v3_1/types"
@@ -40,6 +41,7 @@ import (
 	ign3types "github.com/coreos/ignition/v2/config/v3_2/types"
 	ign3_3 "github.com/coreos/ignition/v2/config/v3_3"
 	ign3_4 "github.com/coreos/ignition/v2/config/v3_4"
+	ign3_4types "github.com/coreos/ignition/v2/config/v3_4/types"
 	validate3 "github.com/coreos/ignition/v2/config/validate"
 	"github.com/ghodss/yaml"
 	"github.com/golang/glog"
@@ -146,6 +148,32 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, cconfig *mcfgv1.Contro
 			}
 			if !present {
 				kargs = append(kargs, arg)
+			}
+		}
+	}
+
+	// Take the kargs from ignition and put them in MachineConfig if we're downgrading
+	// TODO(jkyros): This block is only here for downgrade compatibility
+	// with future MCOs that understand and use ignition 3.3+ KernelArguments
+	// remove this when we raise the ignition default to 3.4
+	for _, cfg := range configs {
+		ignKargs, err := ExtractIgnitionKargsFor4_13(cfg.Spec.Config.Raw)
+		if err != nil {
+			return nil, fmt.Errorf("Error downgrading KernelArguments for %s: %w", cfg.Name, err)
+		}
+		for _, arg := range ignKargs {
+			var present bool
+			for _, val := range kargs {
+				// arg is really a string under the hood, but it's a karg type so
+				// we convert it to a string for MachineConfig
+				if val == string(arg) {
+
+					present = true
+					break
+				}
+			}
+			if !present {
+				kargs = append(kargs, string(arg))
 			}
 		}
 	}
@@ -539,12 +567,44 @@ func ValidateMachineConfig(cfg mcfgv1.MachineConfigSpec) error {
 	return nil
 }
 
+// ExtractIgnitionKargsFor4_13 parses a raw ignition config to 3.4 and extracts the kernel args,
+// erroring if ShouldNotExist is populated, since this MCO doesn't know how to implement that. It's used
+// by the render controller so newer versions that specify kargs in ignition configs will still
+// work during a downgrade.
+// TODO(jkyros): remove this when we raise the ignition default to 3.4
+func ExtractIgnitionKargsFor4_13(rawIgn []byte) ([]ign3_4types.KernelArgument, error) {
+	ignCfgV3, rptV3, errV3 := ign3_4.ParseCompatibleVersion(rawIgn)
+	// No kargs in an empty config
+	if errors.Is(errV3, ign3errors.ErrEmpty) {
+		return nil, nil
+	}
+	if errV3 == nil && !rptV3.IsFatal() {
+		// We can't reconcile ShoultNotExist
+		if len(ignCfgV3.KernelArguments.ShouldNotExist) > 0 {
+			return nil, fmt.Errorf("Ignition KernelArguments.ShouldNotExist is not supported in this release ( ShouldNotExist: %s was supplied )", ignCfgV3.KernelArguments.ShouldNotExist)
+		}
+
+		// But we can stuff ShouldExist in MachineConfig, so send those back
+		if len(ignCfgV3.KernelArguments.ShouldExist) > 0 {
+			return ignCfgV3.KernelArguments.ShouldExist, nil
+		}
+	}
+	return nil, errV3
+}
+
 // IgnParseWrapper parses rawIgn for both V2 and V3 ignition configs and returns
 // a V2 or V3 Config or an error. This wrapper is necessary since V2 and V3 use different parsers.
 func IgnParseWrapper(rawIgn []byte) (interface{}, error) {
 	// ParseCompatibleVersion will parse any config <= N to version N
 	ignCfgV3, rptV3, errV3 := ign3_4.ParseCompatibleVersion(rawIgn)
 	if errV3 == nil && !rptV3.IsFatal() {
+
+		// TODO(jkyros): This removes/ignores the kargs for the downconversion to 3.2 since 3.2 doesn't
+		// support the kargs fields (and the MCO doesn't either) but it still needs to be okay if we receive one.
+		// This is okay because in our MachineConfig render we merge them into MachineConfig kargs before
+		// these get stripped out.
+		ignCfgV3.KernelArguments = ign3_4types.KernelArguments{}
+
 		// Regardless of the input version it has now been translated to a 3.4 config, downtranslate to 3.3 so we
 		// can get down to 3.2
 		ignCfgV3_3, errV3_3 := v34tov33.Translate(ignCfgV3)
