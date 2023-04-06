@@ -159,6 +159,7 @@ func runBootstrapCmd(cmd *cobra.Command, args []string) {
 			CorednsBootstrap:               bootstrapOpts.corednsImage,
 			BaremetalRuntimeCfgBootstrap:   bootstrapOpts.baremetalRuntimeCfgImage,
 			OauthProxy:                     bootstrapOpts.oauthProxyImage,
+			KubeRbacProxy:                  bootstrapOpts.kubeRbacProxyImage,
 			BaseOSContainerImage:           bootstrapOpts.baseOSContainerImage,
 			BaseOSExtensionsContainerImage: bootstrapOpts.baseOSExtensionsContainerImage,
 		},

@@ -105,7 +105,7 @@ func TestRenderAllManifests(t *testing.T) {
 		TargetNamespace: "testing-namespace",
 		Images: &RenderConfigImages{
 			MachineConfigOperator: "mco-operator-image",
-			OauthProxy:            "oauth-proxy-image",
+			KubeRbacProxy:         "kube-rbac-proxy-image",
 			KeepalivedBootstrap:   "keepalived-bootstrap-image",
 		},
 		ControllerConfig: mcfgv1.ControllerConfigSpec{
@@ -246,7 +246,7 @@ func TestRenderAsset(t *testing.T) {
 			TargetNamespace: "testing-namespace",
 			Images: &RenderConfigImages{
 				MachineConfigOperator: "mco-operator-image",
-				OauthProxy:            "oauth-proxy-image",
+				KubeRbacProxy:         "kube-rbac-proxy-image",
 			},
 			ControllerConfig: mcfgv1.ControllerConfigSpec{
 				Proxy: &configv1.ProxyStatus{
@@ -257,7 +257,7 @@ func TestRenderAsset(t *testing.T) {
 		},
 		FindExpected: []string{
 			"image: mco-operator-image",
-			"image: oauth-proxy-image",
+			"image: kube-rbac-proxy-image",
 			"- name: HTTPS_PROXY\n            value: https://i.am.a.proxy.server",
 			"- name: NO_PROXY\n            value: \"*\"", // Ensure the * is quoted: "*": https://bugzilla.redhat.com/show_bug.cgi?id=1947066
 		},
