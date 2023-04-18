@@ -201,6 +201,9 @@ func TestRenderAllManifests(t *testing.T) {
 			// ensure there are no rendering errors.
 			if strings.HasSuffix(manifestPath, ".yaml") {
 				assertRenderedCanBeRead(t, buf)
+				if strings.HasSuffix(manifestPath, "daemonset.yaml") {
+					t.Logf("MANIFEST: %s", buf)
+				}
 			}
 		})
 	}

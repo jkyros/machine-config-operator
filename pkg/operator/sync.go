@@ -56,10 +56,12 @@ var (
 
 type manifestPaths struct {
 	clusterRoles        []string
+	roles               []string
 	roleBindings        []string
 	clusterRoleBindings []string
 	serviceAccounts     []string
 	secrets             []string
+	configMaps          []string
 	daemonset           string
 }
 
@@ -71,6 +73,8 @@ const (
 	mccEventsRoleBindingTargetManifestPath  = "manifests/machineconfigcontroller/events-rolebinding-target.yaml"
 	mccClusterRoleBindingManifestPath       = "manifests/machineconfigcontroller/clusterrolebinding.yaml"
 	mccServiceAccountManifestPath           = "manifests/machineconfigcontroller/sa.yaml"
+	mccKubeRbacProxyConfigMapPath           = "manifests/machineconfigcontroller/kube-rbac-proxy-config.yaml"
+	mccKubeRbacProxyPrometheusRolePath      = "manifests/machineconfigcontroller/prometheus-rbac.yaml"
 
 	// Machine Config Daemon manifest paths
 	mcdClusterRoleManifestPath              = "manifests/machineconfigdaemon/clusterrole.yaml"
@@ -80,6 +84,8 @@ const (
 	mcdClusterRoleBindingManifestPath       = "manifests/machineconfigdaemon/clusterrolebinding.yaml"
 	mcdServiceAccountManifestPath           = "manifests/machineconfigdaemon/sa.yaml"
 	mcdDaemonsetManifestPath                = "manifests/machineconfigdaemon/daemonset.yaml"
+	mcdKubeRbacProxyConfigMapPath           = "manifests/machineconfigdaemon/kube-rbac-proxy-config.yaml"
+	mcdKubeRbacProxyPrometheusRolePath      = "manifests/machineconfigdaemon/prometheus-rbac.yaml"
 
 	// Machine Config Server manifest paths
 	mcsClusterRoleManifestPath                    = "manifests/machineconfigserver/clusterrole.yaml"
@@ -511,6 +517,18 @@ func (optr *Operator) applyManifests(config *renderConfig, paths manifestPaths) 
 		}
 	}
 
+	for _, path := range paths.roles {
+		rBytes, err := renderAsset(config, path)
+		if err != nil {
+			return err
+		}
+		r := resourceread.ReadRoleV1OrDie(rBytes)
+		_, _, err = resourceapply.ApplyRole(context.TODO(), optr.kubeClient.RbacV1(), optr.libgoRecorder, r)
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, path := range paths.roleBindings {
 		rbBytes, err := renderAsset(config, path)
 		if err != nil {
@@ -554,6 +572,18 @@ func (optr *Operator) applyManifests(config *renderConfig, paths manifestPaths) 
 		}
 		s := resourceread.ReadSecretV1OrDie(sBytes)
 		_, _, err = resourceapply.ApplySecret(context.TODO(), optr.kubeClient.CoreV1(), optr.libgoRecorder, s)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, path := range paths.configMaps {
+		cmBytes, err := renderAsset(config, path)
+		if err != nil {
+			return err
+		}
+		cm := resourceread.ReadConfigMapV1OrDie(cmBytes)
+		_, _, err = resourceapply.ApplyConfigMap(context.TODO(), optr.kubeClient.CoreV1(), optr.libgoRecorder, cm)
 		if err != nil {
 			return err
 		}
@@ -630,6 +660,9 @@ func (optr *Operator) syncControllerConfig(config *renderConfig) error {
 
 func (optr *Operator) syncMachineConfigController(config *renderConfig) error {
 	paths := manifestPaths{
+		roles: []string{
+			mccKubeRbacProxyPrometheusRolePath,
+		},
 		clusterRoles: []string{
 			mccClusterRoleManifestPath,
 			mccEventsClusterRoleManifestPath,
@@ -643,6 +676,9 @@ func (optr *Operator) syncMachineConfigController(config *renderConfig) error {
 		},
 		serviceAccounts: []string{
 			mccServiceAccountManifestPath,
+		},
+		configMaps: []string{
+			mccKubeRbacProxyConfigMapPath,
 		},
 	}
 	if err := optr.applyManifests(config, paths); err != nil {
@@ -669,6 +705,9 @@ func (optr *Operator) syncMachineConfigController(config *renderConfig) error {
 
 func (optr *Operator) syncMachineConfigDaemon(config *renderConfig) error {
 	paths := manifestPaths{
+		roles: []string{
+			mcdKubeRbacProxyPrometheusRolePath,
+		},
 		clusterRoles: []string{
 			mcdClusterRoleManifestPath,
 			mcdEventsClusterRoleManifestPath,
@@ -684,6 +723,9 @@ func (optr *Operator) syncMachineConfigDaemon(config *renderConfig) error {
 			mcdServiceAccountManifestPath,
 		},
 		daemonset: mcdDaemonsetManifestPath,
+		configMaps: []string{
+			mcdKubeRbacProxyConfigMapPath,
+		},
 	}
 
 	// Only generate a new proxy cookie secret if the secret does not exist or if it has been deleted.

@@ -45,6 +45,8 @@ spec:
             cpu: 20m
             memory: 50Mi
         volumeMounts:
+        - mountPath: /etc/tls/private
+          name: proxy-tls
         - mountPath: /etc/kube-rbac-proxy
           name: mcc-auth-proxy-config
       serviceAccountName: machine-config-controller
