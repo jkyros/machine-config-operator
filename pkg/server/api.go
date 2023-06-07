@@ -133,7 +133,7 @@ func (sh *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	// we know we're at 3.2 in code.. serve directly, parsing is expensive...
+	// we know we're at 3.4 in code.. serve directly, parsing is expensive...
 	// we're doing it during an HTTP request, and most notably before we write the HTTP headers
 	var serveConf *runtime.RawExtension
 	if reqConfigVer.Equal(*semver.New("3.4.0")) {
@@ -156,7 +156,14 @@ func (sh *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		serveConf = &converted33
 	} else if reqConfigVer.Equal(*semver.New("3.2.0")) {
-		serveConf = conf
+		converted32, err := ctrlcommon.ConvertRawExtIgnitionToV3_2(conf)
+		if err != nil {
+			w.Header().Set("Content-Length", "0")
+			w.WriteHeader(http.StatusInternalServerError)
+			klog.Errorf("couldn't convert config for req: %v, error: %v", cr, err)
+			return
+		}
+		serveConf = &converted32
 	} else if reqConfigVer.Equal(*semver.New("3.1.0")) {
 		converted31, err := ctrlcommon.ConvertRawExtIgnitionToV3_1(conf)
 		if err != nil {
