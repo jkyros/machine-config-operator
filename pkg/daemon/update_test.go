@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	ign3types "github.com/coreos/ignition/v2/config/v3_2/types"
+	ign3types "github.com/coreos/ignition/v2/config/v3_4/types"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 	ctrlcommon "github.com/openshift/machine-config-operator/pkg/controller/common"
 	"github.com/openshift/machine-config-operator/pkg/daemon/osrelease"
@@ -136,10 +136,11 @@ func TestReconcilable(t *testing.T) {
 	checkReconcilableResults(t, "Filesystem", isReconcilable)
 
 	// Verify Raid changes react as expected
+	var stripe = "stripe"
 	oldIgnCfg.Storage.Raid = []ign3types.Raid{
 		{
 			Name:    "data",
-			Level:   "stripe",
+			Level:   &stripe,
 			Devices: []ign3types.Device{"/dev/vda", "/dev/vdb"},
 		},
 	}
