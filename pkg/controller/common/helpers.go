@@ -118,6 +118,46 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, cconfig *mcfgv1.Contro
 		}
 	}
 
+	kargs := []string{}
+	for _, cfg := range configs {
+		for _, arg := range cfg.Spec.KernelArguments {
+			if !InSlice(arg, kargs) {
+				kargs = append(kargs, arg)
+			}
+		}
+	}
+
+	if len(kargs) > 0 {
+		klog.Infof("Deprecated MachineConfig KernelArguments populated %s, appending toIgnition kargs, but this will eventually stop working", kargs)
+	}
+
+	// TODO(jkyros): This doesn't save us from cases where we have combined args. So say ignition has: "one=1 two=2" and
+	// machineconfig has "one=1", "two=2" they won't get mergedde/duped, we'll end up with "one=1 two=2 one=1 two=2". I'd say we
+	// could skip "merging" and just append but both ignition and machine config de-dupe args separately, so I think it makes
+	// sense to also do that between them
+	var addMachineConfigKargs []ign3types.KernelArgument
+	for _, arg := range kargs {
+		// go through the list of from ignition, and make sure we aren't adding duplicates from machineconfig
+		for _, shouldExist := range outIgn.KernelArguments.ShouldExist {
+			if arg == string(shouldExist) {
+				// The arg is already there
+				continue
+			}
+		}
+		// make sure we don't add something from machineconfig that shouldn't be there
+		for _, shouldNotExist := range outIgn.KernelArguments.ShouldNotExist {
+			if arg == string(shouldNotExist) {
+				// The arg shouldn't be there
+				continue
+			}
+		}
+		// if we made it here, we still need to add it to the ignition list because we don't have it and we could
+		addMachineConfigKargs = append(addMachineConfigKargs, ign3types.KernelArgument(arg))
+	}
+	// ignition kargs get applied first when the system comes up, so it seems fair that the machineconfig args
+	// come last
+	outIgn.KernelArguments.ShouldExist = append(outIgn.KernelArguments.ShouldExist, addMachineConfigKargs...)
+
 	rawOutIgn, err := json.Marshal(outIgn)
 	if err != nil {
 		return nil, err
@@ -136,15 +176,6 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, cconfig *mcfgv1.Contro
 	// If no MC sets kerneType, then set it to 'default' since that's what it is using
 	if kernelType == "" {
 		kernelType = KernelTypeDefault
-	}
-
-	kargs := []string{}
-	for _, cfg := range configs {
-		for _, arg := range cfg.Spec.KernelArguments {
-			if !InSlice(arg, kargs) {
-				kargs = append(kargs, arg)
-			}
-		}
 	}
 
 	extensions := []string{}
@@ -181,7 +212,7 @@ func MergeMachineConfigs(configs []*mcfgv1.MachineConfig, cconfig *mcfgv1.Contro
 		Spec: mcfgv1.MachineConfigSpec{
 			OSImageURL:                     osImageURL,
 			BaseOSExtensionsContainerImage: baseOSExtensionsContainerImage,
-			KernelArguments:                kargs,
+			KernelArguments:                []string{}, // Deprecated in favor of ignition kargs
 			Config: runtime.RawExtension{
 				Raw: rawOutIgn,
 			},

@@ -273,7 +273,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 	// to make sure we don't break that use case, but realtime kernel update and extensions update always ran
 	// if they were in use, so we also need to preserve that behavior.
 	// https://issues.redhat.com/browse/OCPBUGS-4049
-	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType || mcDiff.kargs ||
+	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType || mcDiff.kargs || mcDiff.ignkargs ||
 		canonicalizeKernelType(newConfig.Spec.KernelType) == ctrlcommon.KernelTypeRealtime || len(newConfig.Spec.Extensions) > 0 {
 
 		// Throw started/staged events only if there is any update required for the OS
@@ -361,7 +361,7 @@ func calculatePostConfigChangeAction(diff *machineConfigDiff, diffFileSet []stri
 		return []string{postConfigChangeActionReboot}, nil
 	}
 
-	if diff.osUpdate || diff.kargs || diff.fips || diff.units || diff.kernelType || diff.extensions {
+	if diff.osUpdate || diff.kargs || diff.ignkargs || diff.fips || diff.units || diff.kernelType || diff.extensions {
 		// must reboot
 		return []string{postConfigChangeActionReboot}, nil
 	}
@@ -618,6 +618,7 @@ func (dn *Daemon) removeRollback() error {
 // improved logging.
 type machineConfigDiff struct {
 	osUpdate   bool
+	ignkargs   bool
 	kargs      bool
 	fips       bool
 	passwd     bool
@@ -678,11 +679,15 @@ func newMachineConfigDiff(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineC
 	// Both nil and empty slices are of zero length,
 	// consider them as equal while comparing KernelArguments in both MachineConfigs
 	kargsEmpty := len(oldConfig.Spec.KernelArguments) == 0 && len(newConfig.Spec.KernelArguments) == 0
+	ignKargsEmpty := len(oldIgn.KernelArguments.ShouldExist) == 0 && len(newIgn.KernelArguments.ShouldExist) == 0 &&
+		len(oldIgn.KernelArguments.ShouldNotExist) == 0 && len(newIgn.KernelArguments.ShouldNotExist) == 0
 	extensionsEmpty := len(oldConfig.Spec.Extensions) == 0 && len(newConfig.Spec.Extensions) == 0
 
 	return &machineConfigDiff{
-		osUpdate:   oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
+		osUpdate: oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
+		// kargs can come from either machineconfig or ignition now
 		kargs:      !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
+		ignkargs:   !(ignKargsEmpty || reflect.DeepEqual(oldIgn.KernelArguments, newIgn.KernelArguments)),
 		fips:       oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
 		passwd:     !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
 		files:      !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
@@ -1995,10 +2000,17 @@ func (dn *CoreOSDaemon) applyLayeredOSChanges(mcDiff machineConfigDiff, oldConfi
 	// if we're here, we've successfully pivoted, or pivoting wasn't necessary, so we reset the error gauge
 	mcdPivotErr.Set(0)
 
-	if mcDiff.kargs {
-		if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+	if mcDiff.ignkargs {
+
+		klog.Infof("Applying ignition kargs")
+		if err := dn.updateIgnitionKernelArguments(oldConfig, newConfig); err != nil {
 			return err
 		}
+	}
+
+	// This should be impossible. If we're making it here, our karg consolidation in the render controller is not working.
+	if mcDiff.kargs {
+		klog.Warningf("Deprecated MachineConfig kargs is populated with %s, ignoring in favor of ignition kargs", newConfig.Spec.KernelArguments)
 	}
 
 	// Switch to real time kernel
@@ -2010,4 +2022,48 @@ func (dn *CoreOSDaemon) applyLayeredOSChanges(mcDiff machineConfigDiff, oldConfi
 
 	// Apply extensions
 	return dn.applyExtensions(oldConfig, newConfig)
+}
+
+func (dn *Daemon) updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.MachineConfig) error {
+	oldIgnConfig, err := ctrlcommon.ParseAndConvertConfig(oldConfig.Spec.Config.Raw)
+	if err != nil {
+		return fmt.Errorf("parsing old Ignition config failed: %w", err)
+	}
+	newIgnConfig, err := ctrlcommon.ParseAndConvertConfig(newConfig.Spec.Config.Raw)
+	if err != nil {
+		return fmt.Errorf("parsing new Ignition config failed: %w", err)
+	}
+
+	cmdArgs := []string{}
+
+	// To keep kernel argument processing simpler and bug free, we first delete all
+	// kernel arguments which have been applied by MCO previously and append all of the
+	// kernel arguments present in the new rendered MachineConfig.
+	// See https://bugzilla.redhat.com/show_bug.cgi?id=1866546#c10.
+
+	// Remove the old ignition kargs if there are any
+	for _, arg := range oldIgnConfig.KernelArguments.ShouldExist {
+		cmdArgs = append(cmdArgs, "--delete-if-present", string(arg))
+	}
+	// Remove the old machineconfig kargs if there are any
+	for _, arg := range oldConfig.Spec.KernelArguments {
+		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
+	}
+	// And now that we support "should not exist", we need to remove those too
+	for _, arg := range oldIgnConfig.KernelArguments.ShouldNotExist {
+		cmdArgs = append(cmdArgs, "--delete-if-present", string(arg))
+	}
+	// And then after we've removed them all, we insert the ones that should be there
+	for _, arg := range newIgnConfig.KernelArguments.ShouldExist {
+		cmdArgs = append(cmdArgs, "--append-if-missing", string(arg))
+	}
+
+	if len(cmdArgs) == 0 {
+		return nil
+	}
+
+	args := append([]string{"kargs"}, cmdArgs...)
+	logSystem("Running rpm-ostree %v", args)
+	return runRpmOstree(args...)
+
 }

@@ -284,7 +284,7 @@ func TestMergeMachineConfigs(t *testing.T) {
 	cconfig.Spec.OSImageURL = "testURL"
 	cconfig.Spec.BaseOSContainerImage = "newformatURL"
 	fips := true
-	kargs := []string{"testKarg", "kargFromIgnitionDowngrade"}
+	kargs := []string{"testKarg"}
 	extensions := []string{"testExtensions"}
 
 	// Test that a singular base config that sets FIPS also sets other defaults correctly
@@ -319,7 +319,7 @@ func TestMergeMachineConfigs(t *testing.T) {
 			Extensions: []string{},
 		},
 	}
-	assert.Equal(t, *mergedMachineConfig, *expectedMachineConfig)
+	assert.Equal(t, *expectedMachineConfig, *mergedMachineConfig)
 
 	// Test that all other configs can also be set properly
 
@@ -369,18 +369,6 @@ func TestMergeMachineConfigs(t *testing.T) {
 		},
 	})
 
-	/*
-		// TODO(jkyros): remove this when we raise the ignition default to 3.4
-		machineConfigIgnKernelArgsDowngrade := helpers.CreateMachineConfigFromIgnition(ign3_4types.Config{
-			Ignition: ign3_4types.Ignition{
-				Version: ign3_4types.MaxVersion.String(),
-			},
-			KernelArguments: ign3_4types.KernelArguments{
-				ShouldExist:    []ign3_4types.KernelArgument{"kargFromIgnitionDowngrade"},
-				ShouldNotExist: []ign3_4types.KernelArgument{},
-			},
-		})*/
-
 	// we added some v3 specific logic for kargs, make sure we didn't break the v2 path
 	machineConfigIgnV2Merge := helpers.CreateMachineConfigFromIgnition(ign2types.Config{
 		Ignition: ign2types.Ignition{
@@ -418,11 +406,16 @@ func TestMergeMachineConfigs(t *testing.T) {
 	expectedMachineConfig = &mcfgv1.MachineConfig{
 		Spec: mcfgv1.MachineConfigSpec{
 			OSImageURL:      "overriddenURL",
-			KernelArguments: kargs,
+			KernelArguments: []string{}, // Deprecated, we're using the Ignition args now
 			Config: runtime.RawExtension{
 				Raw: helpers.MarshalOrDie(ign3types.Config{
 					Ignition: ign3types.Ignition{
 						Version: ign3types.MaxVersion.String(),
+					},
+					// The machineconfig kargs should end up here
+					KernelArguments: ign3types.KernelArguments{
+						ShouldExist:    []ign3types.KernelArgument{"testKarg"},
+						ShouldNotExist: []ign3types.KernelArgument{},
 					},
 					Passwd: ign3types.Passwd{
 						Users: []ign3types.PasswdUser{
@@ -436,7 +429,7 @@ func TestMergeMachineConfigs(t *testing.T) {
 			Extensions: extensions,
 		},
 	}
-	assert.Equal(t, *mergedMachineConfig, *expectedMachineConfig)
+	assert.Equal(t, *expectedMachineConfig, *mergedMachineConfig)
 }
 
 func TestRemoveIgnDuplicateFilesAndUnits(t *testing.T) {
