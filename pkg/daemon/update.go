@@ -514,34 +514,39 @@ func (dn *Daemon) update(oldConfig, newConfig *mcfgv1.MachineConfig, skipCertifi
 		}
 	}()
 
-	if err := dn.updateSSHKeys(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
-		return err
-	}
-
-	defer func() {
-		if retErr != nil {
-			if err := dn.updateSSHKeys(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
-				errs := kubeErrs.NewAggregate([]error{err, retErr})
-				retErr = fmt.Errorf("error rolling back SSH keys updates: %w", errs)
-				return
-			}
+	// Avoid doing this work if nothing has changed, which should also keep us from overwriting
+	// the keys written by ignition during bootstrap, since we go from "empty" to "empty"
+	// See: https://issues.redhat.com/browse/OCPBUGS-16227
+	if diff.passwd {
+		if err := dn.updateSSHKeys(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
+			return err
 		}
-	}()
 
-	// Set password hash
-	if err := dn.SetPasswordHash(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
-		return err
-	}
-
-	defer func() {
-		if retErr != nil {
-			if err := dn.SetPasswordHash(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
-				errs := kubeErrs.NewAggregate([]error{err, retErr})
-				retErr = fmt.Errorf("error rolling back password hash updates: %w", errs)
-				return
+		defer func() {
+			if retErr != nil {
+				if err := dn.updateSSHKeys(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
+					errs := kubeErrs.NewAggregate([]error{err, retErr})
+					retErr = fmt.Errorf("error rolling back SSH keys updates: %w", errs)
+					return
+				}
 			}
+		}()
+
+		// Set password hash
+		if err := dn.SetPasswordHash(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
+			return err
 		}
-	}()
+
+		defer func() {
+			if retErr != nil {
+				if err := dn.SetPasswordHash(newIgnConfig.Passwd.Users, oldIgnConfig.Passwd.Users); err != nil {
+					errs := kubeErrs.NewAggregate([]error{err, retErr})
+					retErr = fmt.Errorf("error rolling back password hash updates: %w", errs)
+					return
+				}
+			}
+		}()
+	}
 
 	if dn.os.IsCoreOSVariant() {
 		coreOSDaemon := CoreOSDaemon{dn}
