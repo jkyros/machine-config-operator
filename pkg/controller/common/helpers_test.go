@@ -207,7 +207,7 @@ func TestParseAndConvert(t *testing.T) {
 	testIgn3Config.Ignition.Version = "3.1.0"
 	// turn it into a raw []byte
 	rawIgn = helpers.MarshalOrDie(testIgn3Config)
-	// check that it was parsed successfully back to 3.2
+	// check that it was parsed successfully back to the default version
 	convertedIgn, err = ParseAndConvertConfig(rawIgn)
 	require.Nil(t, err)
 	testIgn3Config.Ignition.Version = InternalMCOIgnitionVersion
@@ -217,7 +217,7 @@ func TestParseAndConvert(t *testing.T) {
 	testIgn3Config.Ignition.Version = "3.0.0"
 	// turn it into a raw []byte
 	rawIgn = helpers.MarshalOrDie(testIgn3Config)
-	// check that it was parsed successfully back to 3.2
+	// check that it was parsed successfully back to the default version
 	convertedIgn, err = ParseAndConvertConfig(rawIgn)
 	require.Nil(t, err)
 	testIgn3Config.Ignition.Version = InternalMCOIgnitionVersion
@@ -227,7 +227,7 @@ func TestParseAndConvert(t *testing.T) {
 	testIgn3Config.Ignition.Version = "3.3.0"
 	// turn it into a raw []byte
 	rawIgn = helpers.MarshalOrDie(testIgn3Config)
-	// check that it was parsed successfully back to 3.2
+	// check that it was parsed successfully back to the default version
 	convertedIgn, err = ParseAndConvertConfig(rawIgn)
 	require.Nil(t, err)
 	testIgn3Config.Ignition.Version = InternalMCOIgnitionVersion
@@ -237,37 +237,11 @@ func TestParseAndConvert(t *testing.T) {
 	testIgn3Config.Ignition.Version = "3.4.0"
 	// turn it into a raw []byte
 	rawIgn = helpers.MarshalOrDie(testIgn3Config)
-	// check that it was parsed successfully back to 3.2
+	// check that it was parsed successfully back to the default version
 	convertedIgn, err = ParseAndConvertConfig(rawIgn)
 	require.Nil(t, err)
 	testIgn3Config.Ignition.Version = InternalMCOIgnitionVersion
 	assert.Equal(t, testIgn3Config, convertedIgn)
-
-	/*
-		// Make a an Ign 3.4 cfg with kargs
-		testIgn3Config.Ignition.Version = "3.4.0"
-
-
-		var ign34 ign3_4types.Config
-		// Parse this up to 3.4 specifically so we can test a downgrade that
-		// is using kargs
-		ign34, _, err = ign3_4.ParseCompatibleVersion(rawIgn)
-		require.Nil(t, err)
-		ign34.KernelArguments = ign3_4types.KernelArguments{
-			ShouldExist:    []ign3_4types.KernelArgument{"one", "two", "three"},
-			ShouldNotExist: []ign3_4types.KernelArgument{"four", "five", "six"},
-		}
-		// turn it into a raw []byte
-		rawIgn = helpers.MarshalOrDie(ign34)
-
-		// check that it was parsed successfully back to 3.2
-		// this should strip out the kernel args
-		convertedIgn, err = ParseAndConvertConfig(rawIgn)
-		require.Nil(t, err)
-		testIgn3Config.Ignition.Version = "3.2.0"
-		// we compare to testign3Config because kargs should get stripped out
-		assert.Equal(t, testIgn3Config, convertedIgn)
-	*/
 
 	// Make a bad Ign3 cfg
 	testIgn3Config.Ignition.Version = "21.0.0"
