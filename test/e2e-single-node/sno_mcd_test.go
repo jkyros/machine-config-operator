@@ -87,6 +87,7 @@ func TestKernelArguments(t *testing.T) {
 	assert.Equal(t, node.Annotations[constants.MachineConfigDaemonStateAnnotationKey], constants.MachineConfigDaemonStateDone)
 	kargs := helpers.ExecCmdOnNode(t, cs, node, "cat", "/rootfs/proc/cmdline")
 	expectedKernelArgs := []string{"foo=bar", "foo=baz", "baz=test", "bar=hello world"}
+	t.Logf("Detected kargs: %s", kargs)
 	for _, v := range expectedKernelArgs {
 		if !strings.Contains(kargs, v) {
 			t.Fatalf("Missing %q in kargs: %q", v, kargs)
@@ -106,6 +107,7 @@ func TestKernelArguments(t *testing.T) {
 	assert.Equal(t, node.Annotations[constants.CurrentMachineConfigAnnotationKey], oldMasterRenderedConfig)
 	assert.Equal(t, node.Annotations[constants.MachineConfigDaemonStateAnnotationKey], constants.MachineConfigDaemonStateDone)
 	kargs = helpers.ExecCmdOnNode(t, cs, node, "cat", "/rootfs/proc/cmdline")
+	t.Logf("Detected kargs: %s", kargs)
 
 	for _, v := range expectedKernelArgs {
 		if strings.Contains(kargs, v) {

@@ -2042,20 +2042,20 @@ func (dn *Daemon) updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.Mac
 	// See https://bugzilla.redhat.com/show_bug.cgi?id=1866546#c10.
 
 	// Remove the old ignition kargs if there are any
-	for _, arg := range oldIgnConfig.KernelArguments.ShouldExist {
-		cmdArgs = append(cmdArgs, "--delete-if-present", string(arg))
+	for _, arg := range stringifyKargs(oldIgnConfig.KernelArguments.ShouldExist) {
+		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
 	}
 	// Remove the old machineconfig kargs if there are any
 	for _, arg := range oldConfig.Spec.KernelArguments {
 		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
 	}
 	// And now that we support "should not exist", we need to remove those too
-	for _, arg := range oldIgnConfig.KernelArguments.ShouldNotExist {
-		cmdArgs = append(cmdArgs, "--delete-if-present", string(arg))
+	for _, arg := range stringifyKargs(oldIgnConfig.KernelArguments.ShouldNotExist) {
+		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
 	}
 	// And then after we've removed them all, we insert the ones that should be there
-	for _, arg := range newIgnConfig.KernelArguments.ShouldExist {
-		cmdArgs = append(cmdArgs, "--append-if-missing", string(arg))
+	for _, arg := range stringifyKargs(newIgnConfig.KernelArguments.ShouldExist) {
+		cmdArgs = append(cmdArgs, "--append-if-missing", arg)
 	}
 
 	if len(cmdArgs) == 0 {
@@ -2066,4 +2066,17 @@ func (dn *Daemon) updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.Mac
 	logSystem("Running rpm-ostree %v", args)
 	return runRpmOstree(args...)
 
+}
+
+// stringifyKargs converts typed ignition kargs to strings so we can use
+// our existing parsing routines on them. This wouldn't be necessary if
+// rpm-ostree could deal with combined kargs directly like ignition does,
+// but it doesn't seem to be able to. So something like "foo=bar baz=ferzle"
+// will be unable to removed unless we split it into "foo=bar" and "baz=ferzle"
+func stringifyKargs(kargs []ign3types.KernelArgument) []string {
+	var convertedArgs []string
+	for _, karg := range kargs {
+		convertedArgs = append(convertedArgs, string(karg))
+	}
+	return parseKernelArguments(convertedArgs)
 }
