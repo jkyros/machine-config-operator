@@ -94,25 +94,6 @@ func appendEncapsulated(conf *ign3types.Config, mc *mcfgv1.MachineConfig, versio
 
 	tmpcfg := mc.DeepCopy()
 	tmpcfg.Spec.Config.Raw = rawTmpIgnCfg
-
-	// TODO(jkyros): I don't like doing this so deep in here, it's "mysterious" and will result
-	// in weird bugs/oversights later I'm sure. But if we're downgrading from a version of ignition that
-	// support kargs, we need to stuff them back into MachineConfig so they still end up in the encapsulation
-	// and they still get applied
-	if version != nil && version.LessThan(*semver.New("3.3.0")) {
-		// we're converting to a version that doesn't support kargs, so we need to stuff them in machineconfig
-		if len(conf.KernelArguments.ShouldNotExist) > 0 {
-			return fmt.Errorf("Can't serve version %s with ignition KernelArguments.ShouldNotExist populated", version)
-		}
-
-		for _, karg := range conf.KernelArguments.ShouldExist {
-			// TODO(jkyros): we probably need to parse/split them because they might be combined
-			mc.Spec.KernelArguments = append(mc.Spec.KernelArguments, string(karg))
-		}
-		// and then we take them out of ignition
-		conf.KernelArguments = ign3types.KernelArguments{}
-	}
-
 	serialized, err := json.Marshal(tmpcfg)
 	if err != nil {
 		return fmt.Errorf("error marshalling MachineConfig: %w", err)

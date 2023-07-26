@@ -2053,8 +2053,22 @@ func (dn *Daemon) updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.Mac
 	for _, arg := range stringifyKargs(oldIgnConfig.KernelArguments.ShouldNotExist) {
 		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
 	}
+
+	removeargs := append([]string{"kargs"}, cmdArgs...)
+	logSystem("Running rpm-ostree %v", removeargs)
+	if err := runRpmOstree(removeargs...); err != nil {
+		return err
+	}
+
+	cmdArgs = []string{}
 	// And then after we've removed them all, we insert the ones that should be there
 	for _, arg := range stringifyKargs(newIgnConfig.KernelArguments.ShouldExist) {
+		cmdArgs =
+			append(cmdArgs, "--append-if-missing", arg)
+	}
+
+	// Add the new machineconfig kargs if there are any
+	for _, arg := range oldConfig.Spec.KernelArguments {
 		cmdArgs = append(cmdArgs, "--append-if-missing", arg)
 	}
 
@@ -2062,10 +2076,12 @@ func (dn *Daemon) updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.Mac
 		return nil
 	}
 
-	args := append([]string{"kargs"}, cmdArgs...)
-	logSystem("Running rpm-ostree %v", args)
-	return runRpmOstree(args...)
-
+	addargs := append([]string{"kargs"}, cmdArgs...)
+	logSystem("Running rpm-ostree %v", addargs)
+	if err := runRpmOstree(addargs...); err != nil {
+		return err
+	}
+	return nil
 }
 
 // stringifyKargs converts typed ignition kargs to strings so we can use
