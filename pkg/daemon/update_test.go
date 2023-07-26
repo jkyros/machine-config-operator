@@ -310,6 +310,22 @@ func TestReconcilableDiff(t *testing.T) {
 	assert.Equal(t, diff.files, false)
 }
 
+// TODO(jkyros): This test isn't done yet, it was just a sanity check, I need way more test cases
+func TestIgnKernelArgs(t *testing.T) {
+	newIgnCfg := ctrlcommon.NewIgnConfig()
+	newMC := helpers.CreateMachineConfigFromIgnition(newIgnCfg)
+	newMC.Spec.KernelArguments = []string{"blah", "foo", "ferzle"}
+	oldMC := canonicalizeEmptyMC(nil)
+	oldMC.Spec.KernelArguments = []string{"one", "two", "three"}
+	addKargs, deleteKargs, err := generateIgnKargs(oldMC, newMC)
+	assert.Nil(t, err)
+	expectedAddKargs := []string{"--append-if-missing", "blah", "--append-if-missing", "foo", "--append-if-missing", "ferzle"}
+	expectedDeleteKargs := []string{"--delete-if-present", "one", "--delete-if-present", "two", "--delete-if-present", "three"}
+	assert.Equal(t, expectedAddKargs, addKargs)
+	assert.Equal(t, expectedDeleteKargs, deleteKargs)
+
+}
+
 func TestKernelAguments(t *testing.T) {
 	tests := []struct {
 		oldKargs []string

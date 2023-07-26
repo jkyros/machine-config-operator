@@ -273,7 +273,7 @@ func (dn *CoreOSDaemon) applyOSChanges(mcDiff machineConfigDiff, oldConfig, newC
 	// to make sure we don't break that use case, but realtime kernel update and extensions update always ran
 	// if they were in use, so we also need to preserve that behavior.
 	// https://issues.redhat.com/browse/OCPBUGS-4049
-	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType || mcDiff.kargs ||
+	if mcDiff.osUpdate || mcDiff.extensions || mcDiff.kernelType || mcDiff.kargs || mcDiff.ignkargs ||
 		canonicalizeKernelType(newConfig.Spec.KernelType) == ctrlcommon.KernelTypeRealtime || len(newConfig.Spec.Extensions) > 0 {
 
 		// Throw started/staged events only if there is any update required for the OS
@@ -361,7 +361,7 @@ func calculatePostConfigChangeAction(diff *machineConfigDiff, diffFileSet []stri
 		return []string{postConfigChangeActionReboot}, nil
 	}
 
-	if diff.osUpdate || diff.kargs || diff.fips || diff.units || diff.kernelType || diff.extensions {
+	if diff.osUpdate || diff.kargs || diff.ignkargs || diff.fips || diff.units || diff.kernelType || diff.extensions {
 		// must reboot
 		return []string{postConfigChangeActionReboot}, nil
 	}
@@ -619,6 +619,7 @@ func (dn *Daemon) removeRollback() error {
 type machineConfigDiff struct {
 	osUpdate   bool
 	kargs      bool
+	ignkargs   bool
 	fips       bool
 	passwd     bool
 	files      bool
@@ -649,7 +650,7 @@ func (mcDiff *machineConfigDiff) osChangesString() string {
 	if mcDiff.kernelType {
 		changes = append(changes, "Changing kernel type")
 	}
-	if mcDiff.kargs {
+	if mcDiff.kargs || mcDiff.ignkargs {
 		changes = append(changes, "Changing kernel arguments")
 	}
 
@@ -678,11 +679,13 @@ func newMachineConfigDiff(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineC
 	// Both nil and empty slices are of zero length,
 	// consider them as equal while comparing KernelArguments in both MachineConfigs
 	kargsEmpty := len(oldConfig.Spec.KernelArguments) == 0 && len(newConfig.Spec.KernelArguments) == 0
+	ignKargsEmpty := len(oldIgn.KernelArguments.ShouldExist) == 0 && len(newIgn.KernelArguments.ShouldExist) == 0
 	extensionsEmpty := len(oldConfig.Spec.Extensions) == 0 && len(newConfig.Spec.Extensions) == 0
 
 	return &machineConfigDiff{
 		osUpdate:   oldConfig.Spec.OSImageURL != newConfig.Spec.OSImageURL,
 		kargs:      !(kargsEmpty || reflect.DeepEqual(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments)),
+		ignkargs:   !(ignKargsEmpty || reflect.DeepEqual(oldIgn.KernelArguments, newIgn.KernelArguments)),
 		fips:       oldConfig.Spec.FIPS != newConfig.Spec.FIPS,
 		passwd:     !reflect.DeepEqual(oldIgn.Passwd, newIgn.Passwd),
 		files:      !reflect.DeepEqual(oldIgn.Storage.Files, newIgn.Storage.Files),
@@ -768,6 +771,13 @@ func reconcilable(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineConfigDif
 		// since we still don't support links but we allow old MC to remove links when upgrading.
 		if len(newIgn.Storage.Links) != 0 {
 			return nil, fmt.Errorf("ignition links section contains changes")
+		}
+	}
+
+	// Don't allow ignition to conflict with MachineConfig kargs
+	for _, karg := range tokenizeIgnKargs(newIgn.KernelArguments.ShouldNotExist) {
+		if ctrlcommon.InSlice(karg, newConfig.Spec.KernelArguments) {
+			return nil, fmt.Errorf("karg %s can't both be required to exist and not exist", karg)
 		}
 	}
 
@@ -1998,9 +2008,9 @@ func (dn *CoreOSDaemon) applyLayeredOSChanges(mcDiff machineConfigDiff, oldConfi
 
 	// if we're here, we've successfully pivoted, or pivoting wasn't necessary, so we reset the error gauge
 	mcdPivotErr.Set(0)
-
-	if mcDiff.kargs {
-		if err := dn.updateKernelArguments(oldConfig.Spec.KernelArguments, newConfig.Spec.KernelArguments); err != nil {
+	klog.Infof("About to check kargs")
+	if mcDiff.kargs || mcDiff.ignkargs {
+		if err := dn.updateIgnKernelArguments(oldConfig, newConfig); err != nil {
 			return err
 		}
 	}
@@ -2014,4 +2024,85 @@ func (dn *CoreOSDaemon) applyLayeredOSChanges(mcDiff machineConfigDiff, oldConfi
 
 	// Apply extensions
 	return dn.applyExtensions(oldConfig, newConfig)
+}
+
+func generateIgnKargs(oldConfig, newConfig *mcfgv1.MachineConfig) (addArgs, deleteArgs []string, err error) {
+	klog.Infof("Handling both ignition and machineconfig kargs")
+
+	oldIgnConfig, err := ctrlcommon.ParseAndConvertConfig(oldConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing old Ignition config failed: %w", err)
+	}
+	newIgnConfig, err := ctrlcommon.ParseAndConvertConfig(newConfig.Spec.Config.Raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing new Ignition config failed: %w", err)
+	}
+
+	// To keep kernel argument processing simpler and bug free, we first delete all
+	// kernel arguments which have been applied by MCO previously and append all of the
+	// kernel arguments present in the new rendered MachineConfig.
+	// See https://bugzilla.redhat.com/show_bug.cgi?id=1866546#c10.
+
+	// Remove the old machineconfig kargs if there are any
+	for _, arg := range oldConfig.Spec.KernelArguments {
+		deleteArgs = append(deleteArgs, "--delete-if-present", arg)
+	}
+	// Remove the old ignition kargs if there are any
+	for _, arg := range tokenizeIgnKargs(oldIgnConfig.KernelArguments.ShouldExist) {
+		deleteArgs = append(deleteArgs, "--delete-if-present", arg)
+	}
+	// And now that we support "should not exist", we need to remove those too
+	for _, arg := range tokenizeIgnKargs(oldIgnConfig.KernelArguments.ShouldNotExist) {
+		deleteArgs = append(deleteArgs, "--delete-if-present", arg)
+	}
+
+	// And then after we've removed them all, we insert the ones that should be there
+	for _, arg := range tokenizeIgnKargs(newIgnConfig.KernelArguments.ShouldExist) {
+		addArgs = append(addArgs, "--append-if-missing", arg)
+	}
+	// Add the new machineconfig kargs if there are any
+	for _, arg := range newConfig.Spec.KernelArguments {
+		addArgs = append(addArgs, "--append-if-missing", arg)
+	}
+
+	return
+}
+
+// tokenizeIgnKargs converts typed ignition kargs to strings and splits them into
+// tokens that rpm-ostree understands.  This wouldn't be necessary if
+// rpm-ostree could deal with combined kargs directly like ignition does,
+// but it doesn't seem to be able to. Currently something like "foo=bar baz=ferzle"
+// will be unable to removed unless we split it into "foo=bar" and "baz=ferzle"
+func tokenizeIgnKargs(kargs []ign3types.KernelArgument) []string {
+	var convertedArgs []string
+	for _, karg := range kargs {
+		convertedArgs = append(convertedArgs, string(karg))
+	}
+	return parseKernelArguments(convertedArgs)
+}
+
+// updateKernelArguments adjusts the kernel args
+func (dn *CoreOSDaemon) updateIgnKernelArguments(oldConfig, newConfig *mcfgv1.MachineConfig) error {
+	addKargs, deleteKargs, err := generateIgnKargs(oldConfig, newConfig)
+	if err != nil {
+		return err
+	}
+	if len(addKargs) == 0 && len(deleteKargs) == 0 {
+		return nil
+	}
+
+	args := append([]string{"kargs"}, deleteKargs...)
+	logSystem("Running rpm-ostree %v", args)
+	if err := runRpmOstree(args...); err != nil {
+		return err
+	}
+
+	// TODO(jkyros): these are grouped into two separate commends because the
+	// "--append-if-missing" doesn't work on an arg if it was also removed by a
+	// "--delete-if-missing" as part of the same command. So we remove everything first
+	// then we add. Then it works.
+
+	args = append([]string{"kargs"}, addKargs...)
+	logSystem("Running rpm-ostree %v", args)
+	return runRpmOstree(args...)
 }

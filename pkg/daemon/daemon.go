@@ -2029,7 +2029,16 @@ func (dn *CoreOSDaemon) validateKernelArguments(currentConfig *mcfgv1.MachineCon
 	for _, arg := range foundArgsArray {
 		foundArgs[arg] = true
 	}
-	expected := parseKernelArguments(currentConfig.Spec.KernelArguments)
+
+	currentIgn, err := ctrlcommon.ParseAndConvertConfig(currentConfig.Spec.Config.Raw)
+	if err != nil {
+		return fmt.Errorf("parsing old Ignition config failed: %w", err)
+	}
+
+	// combine the list of kargs we expect to have
+	expected := tokenizeIgnKargs(currentIgn.KernelArguments.ShouldExist)
+	expected = append(expected, parseKernelArguments(currentConfig.Spec.KernelArguments)...)
+
 	missing := []string{}
 	for _, karg := range expected {
 		if _, ok := foundArgs[karg]; !ok {
@@ -2047,6 +2056,28 @@ func (dn *CoreOSDaemon) validateKernelArguments(currentConfig *mcfgv1.MachineCon
 		klog.Infof("Expected MachineConfig kargs: %v", expected)
 		return fmt.Errorf("missing expected kernel arguments: %v", missing)
 	}
+
+	// we now also support "ShouldNotExist" kargs from ignition, so we have to make sure
+	// they *aren't* there
+	unexpectedIgnition := tokenizeIgnKargs(currentIgn.KernelArguments.ShouldNotExist)
+	erroneouslyPresent := []string{}
+	for _, karg := range unexpectedIgnition {
+		if _, ok := foundArgs[karg]; ok {
+			erroneouslyPresent = append(erroneouslyPresent, karg)
+		}
+	}
+	if len(erroneouslyPresent) > 0 {
+		cmdlinebytes, err := os.ReadFile(CmdLineFile)
+		if err != nil {
+			klog.Warningf("Failed to read %s: %v", CmdLineFile, err)
+		} else {
+			klog.Infof("Booted command line: %s", string(cmdlinebytes))
+		}
+		klog.Infof("Current ostree kargs: %s", rpmostreeKargs)
+		klog.Infof("Unexpected MachineConfig kargs: %v", unexpectedIgnition)
+		return fmt.Errorf("erroenously present kernel arguments: %v", erroneouslyPresent)
+	}
+
 	return nil
 }
 
