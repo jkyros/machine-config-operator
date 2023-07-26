@@ -310,6 +310,17 @@ func TestReconcilableDiff(t *testing.T) {
 	assert.Equal(t, diff.files, false)
 }
 
+func TestIgnKernelArgs(t *testing.T) {
+	newIgnCfg := ctrlcommon.NewIgnConfig()
+	newMC := helpers.CreateMachineConfigFromIgnition(newIgnCfg)
+	newMC.Spec.KernelArguments = []string{"blah", "foo", "ferzle"}
+	oldMC := canonicalizeEmptyMC(nil)
+	oldMC.Spec.KernelArguments = []string{"what", "the", "heck"}
+	err := updateIgnitionKernelArguments(oldMC, newMC)
+	assert.Nil(t, err)
+
+}
+
 func TestKernelAguments(t *testing.T) {
 	tests := []struct {
 		oldKargs []string
