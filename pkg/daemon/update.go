@@ -774,6 +774,13 @@ func reconcilable(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineConfigDif
 		}
 	}
 
+	// Don't allow ignition to conflict with MachineConfig kargs
+	for _, karg := range stringifyKargs(newIgn.KernelArguments.ShouldNotExist) {
+		if ctrlcommon.InSlice(karg, newConfig.Spec.KernelArguments) {
+			return nil, fmt.Errorf("karg %s can't both be required to exist and not exist", karg)
+		}
+	}
+
 	// Special case files append: if the new config wants us to append, then we
 	// have to force a reprovision since it's not idempotent
 	for _, f := range newIgn.Storage.Files {
