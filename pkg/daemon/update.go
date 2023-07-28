@@ -775,7 +775,7 @@ func reconcilable(oldConfig, newConfig *mcfgv1.MachineConfig) (*machineConfigDif
 	}
 
 	// Don't allow ignition to conflict with MachineConfig kargs
-	for _, karg := range stringifyKargs(newIgn.KernelArguments.ShouldNotExist) {
+	for _, karg := range tokenizeIgnKargs(newIgn.KernelArguments.ShouldNotExist) {
 		if ctrlcommon.InSlice(karg, newConfig.Spec.KernelArguments) {
 			return nil, fmt.Errorf("karg %s can't both be required to exist and not exist", karg)
 		}
@@ -2051,16 +2051,16 @@ func updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.MachineConfig) e
 	// kernel arguments present in the new rendered MachineConfig.
 	// See https://bugzilla.redhat.com/show_bug.cgi?id=1866546#c10.
 
-	// Remove the old ignition kargs if there are any
-	for _, arg := range stringifyKargs(oldIgnConfig.KernelArguments.ShouldExist) {
-		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
-	}
 	// Remove the old machineconfig kargs if there are any
 	for _, arg := range oldConfig.Spec.KernelArguments {
 		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
 	}
+	// Remove the old ignition kargs if there are any
+	for _, arg := range tokenizeIgnKargs(oldIgnConfig.KernelArguments.ShouldExist) {
+		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
+	}
 	// And now that we support "should not exist", we need to remove those too
-	for _, arg := range stringifyKargs(oldIgnConfig.KernelArguments.ShouldNotExist) {
+	for _, arg := range tokenizeIgnKargs(oldIgnConfig.KernelArguments.ShouldNotExist) {
 		cmdArgs = append(cmdArgs, "--delete-if-present", arg)
 	}
 	klog.Infof("Delete arguments looks like: %s", cmdArgs)
@@ -2072,9 +2072,13 @@ func updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.MachineConfig) e
 		}
 	}
 
+	// TODO(jkyros): these are grouped into two separate commends because the
+	// "--append-if-missing" doesn't work on an arg if it was also removed by a
+	// "--delete-if-missing" as part of the same command.
+
 	cmdArgs = []string{}
 	// And then after we've removed them all, we insert the ones that should be there
-	for _, arg := range stringifyKargs(newIgnConfig.KernelArguments.ShouldExist) {
+	for _, arg := range tokenizeIgnKargs(newIgnConfig.KernelArguments.ShouldExist) {
 		cmdArgs = append(cmdArgs, "--append-if-missing", arg)
 	}
 
@@ -2093,12 +2097,12 @@ func updateIgnitionKernelArguments(oldConfig, newConfig *mcfgv1.MachineConfig) e
 	return nil
 }
 
-// stringifyKargs converts typed ignition kargs to strings so we can use
-// our existing parsing routines on them. This wouldn't be necessary if
+// tokenizeIgnKargs converts typed ignition kargs to strings and splits them into
+// tokens that rpm-ostree understands.  This wouldn't be necessary if
 // rpm-ostree could deal with combined kargs directly like ignition does,
-// but it doesn't seem to be able to. So something like "foo=bar baz=ferzle"
+// but it doesn't seem to be able to. Currently something like "foo=bar baz=ferzle"
 // will be unable to removed unless we split it into "foo=bar" and "baz=ferzle"
-func stringifyKargs(kargs []ign3types.KernelArgument) []string {
+func tokenizeIgnKargs(kargs []ign3types.KernelArgument) []string {
 	var convertedArgs []string
 	for _, karg := range kargs {
 		convertedArgs = append(convertedArgs, string(karg))

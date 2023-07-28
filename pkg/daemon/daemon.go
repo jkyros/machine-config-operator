@@ -2036,7 +2036,7 @@ func (dn *CoreOSDaemon) validateKernelArguments(currentConfig *mcfgv1.MachineCon
 	}
 
 	// combine the list of kargs we expect to have
-	expected := stringifyKargs(currentIgn.KernelArguments.ShouldExist)
+	expected := tokenizeIgnKargs(currentIgn.KernelArguments.ShouldExist)
 	expected = append(expected, parseKernelArguments(currentConfig.Spec.KernelArguments)...)
 
 	missing := []string{}
@@ -2057,7 +2057,7 @@ func (dn *CoreOSDaemon) validateKernelArguments(currentConfig *mcfgv1.MachineCon
 		return fmt.Errorf("missing expected kernel arguments: %v", missing)
 	}
 
-	unexpectedIgnition := stringifyKargs(currentIgn.KernelArguments.ShouldNotExist)
+	unexpectedIgnition := tokenizeIgnKargs(currentIgn.KernelArguments.ShouldNotExist)
 	erroneously_present := []string{}
 	for _, karg := range unexpectedIgnition {
 		if _, ok := foundArgs[karg]; ok {
