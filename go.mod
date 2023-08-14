@@ -26,7 +26,7 @@ require (
 	github.com/google/renameio v0.1.0
 	github.com/imdario/mergo v0.3.13
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/openshift/api v0.0.0-20230613151523-ba04973d3ed1
+	github.com/openshift/api v0.0.0-20230929221546-73731d374fbf
 	github.com/openshift/client-go v0.0.0-20230607134213-3cd0021bbee3
 	github.com/openshift/cluster-config-operator v0.0.0-alpha.0.0.20230516205036-088c6d48cc1a
 	github.com/openshift/library-go v0.0.0-20230614142803-865e70cc6b32
@@ -36,13 +36,13 @@ require (
 	github.com/spf13/pflag v1.0.6-0.20210604193023-d5e0c0615ace
 	github.com/stretchr/testify v1.8.4
 	github.com/vincent-petithory/dataurl v1.0.0
-	golang.org/x/net v0.11.0
+	golang.org/x/net v0.13.0
 	golang.org/x/time v0.3.0
-	k8s.io/api v0.27.3
+	k8s.io/api v0.28.2
 	k8s.io/apiextensions-apiserver v0.27.3
-	k8s.io/apimachinery v0.27.3
-	k8s.io/client-go v0.27.3
-	k8s.io/code-generator v0.27.3
+	k8s.io/apimachinery v0.28.2
+	k8s.io/client-go v0.28.2
+	k8s.io/code-generator v0.28.2
 	k8s.io/component-base v0.27.3
 	k8s.io/kubectl v0.27.3
 	k8s.io/kubelet v0.27.3
@@ -67,6 +67,7 @@ require (
 	github.com/go-openapi/spec v0.20.9 // indirect
 	github.com/go-openapi/strfmt v0.21.7 // indirect
 	github.com/go-openapi/validate v0.22.1 // indirect
+	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/kkHAIKE/contextcheck v1.1.4 // indirect
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/nunnatsa/ginkgolinter v0.12.1 // indirect
@@ -140,7 +141,7 @@ require (
 	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect
-	github.com/go-openapi/jsonreference v0.20.1 // indirect
+	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.22.4 // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
 	github.com/go-toolsmith/astcopy v1.1.0 // indirect
@@ -289,15 +290,15 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	go4.org v0.0.0-20200104003542-c7e774b10ea0 // indirect
-	golang.org/x/crypto v0.10.0 // indirect
+	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230224173230-c95f2b4c22f2 // indirect
 	golang.org/x/mod v0.10.0 // indirect
 	golang.org/x/oauth2 v0.9.0 // indirect
 	golang.org/x/sync v0.3.0 // indirect
-	golang.org/x/sys v0.9.0 // indirect
-	golang.org/x/term v0.9.0 // indirect
-	golang.org/x/text v0.10.0 // indirect
+	golang.org/x/sys v0.10.0 // indirect
+	golang.org/x/term v0.10.0 // indirect
+	golang.org/x/text v0.11.0 // indirect
 	golang.org/x/tools v0.9.3 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
@@ -311,7 +312,7 @@ require (
 	k8s.io/gengo v0.0.0-20220902162205-c0856e24416d // indirect
 	k8s.io/klog/v2 v2.100.1
 	k8s.io/kube-aggregator v0.27.1 // indirect
-	k8s.io/kube-openapi v0.0.0-20230501164219-8b0f38b5fd1f // indirect
+	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	mvdan.cc/gofumpt v0.5.0 // indirect
 	mvdan.cc/interfacer v0.0.0-20180901003855-c20040233aed // indirect
 	mvdan.cc/lint v0.0.0-20170908181259-adc824a0674b // indirect
@@ -323,3 +324,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
+
+replace github.com/openshift/client-go => github.com/jkyros/client-go v0.0.0-20231002143319-c7f93149293c
