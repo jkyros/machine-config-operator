@@ -947,12 +947,6 @@ func TestMCDRotatesCertsOnPausedPool(t *testing.T) {
 	controllerConfig, err := cs.ControllerConfigs().Get(context.TODO(), "machine-config-controller", metav1.GetOptions{})
 	require.Nil(t, err)
 
-	oldData := ""
-	for _, cert := range controllerConfig.Status.ControllerCertificates {
-		if cert.BundleFile == "KubeAPIServerServingCAData" {
-			oldData = cert.Subject
-		}
-	}
 	t.Logf("Patching certificate")
 	err = helpers.ForceKubeApiserverCertificateRotation(cs)
 	require.Nil(t, err)
@@ -1002,9 +996,6 @@ func TestMCDRotatesCertsOnPausedPool(t *testing.T) {
 
 	// Wait for the pools to settle again, and see that we ran into no errors due to the cert rotation
 	err = helpers.WaitForPoolCompleteAny(t, cs, testPool)
-	require.Nil(t, err)
-
-	err = helpers.WaitForCertStatusToChange(t, cs, oldData)
 	require.Nil(t, err)
 
 }

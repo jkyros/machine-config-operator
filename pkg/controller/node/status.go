@@ -44,19 +44,8 @@ func (ctrl *Controller) syncStatusOnly(pool *mcfgv1.MachineConfigPool) error {
 }
 
 func calculateStatus(cconfig *v1.ControllerConfig, pool *mcfgv1.MachineConfigPool, nodes []*corev1.Node) mcfgv1.MachineConfigPoolStatus {
-	certExpirys := []v1.CertExpiry{}
-	if cconfig != nil {
-		for _, cert := range cconfig.Status.ControllerCertificates {
-			if cert.BundleFile == "KubeAPIServerServingCAData" {
-				certExpirys = append(certExpirys, v1.CertExpiry{
-					Bundle:  cert.BundleFile,
-					Subject: cert.Subject,
-					Expiry:  cert.NotAfter,
-				},
-				)
-			}
-		}
-	}
+	// TODO(jkyros): this is coming right back in
+	_ = cconfig
 	machineCount := int32(len(nodes))
 
 	updatedMachines := getUpdatedMachines(pool.Spec.Configuration.Name, nodes)
@@ -85,7 +74,7 @@ func calculateStatus(cconfig *v1.ControllerConfig, pool *mcfgv1.MachineConfigPoo
 		ReadyMachineCount:       readyMachineCount,
 		UnavailableMachineCount: unavailableMachineCount,
 		DegradedMachineCount:    degradedMachineCount,
-		CertExpirys:             certExpirys,
+		CertExpirys:             nil,
 	}
 	status.Configuration = pool.Status.Configuration
 

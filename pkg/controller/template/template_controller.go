@@ -484,6 +484,9 @@ func updateControllerConfigCerts(config *mcfgv1.ControllerConfig) bool {
 		stillExists = false
 	}
 	config.Status.ControllerCertificates = append(newCtrlCerts, newImgCerts...)
+	// TODO(jkyros): this is only temporary until we fix the API types
+	config.Status.ControllerCertificates = nil
+
 	return modified
 }
 
