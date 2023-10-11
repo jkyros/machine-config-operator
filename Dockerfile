@@ -20,6 +20,8 @@ COPY --from=builder /go/src/github.com/openshift/machine-config-operator/instroo
 RUN cd / && tar xf /tmp/instroot.tar && rm -f /tmp/instroot.tar
 COPY --from=rhel9-builder /go/src/github.com/openshift/machine-config-operator/instroot/usr/bin/machine-config-daemon /usr/bin/machine-config-daemon.rhel9
 COPY install /manifests
+# API is now migrated including controller, so copy our CRDs straight from /vendor 
+COPY vendor/github.com/openshift/api/machineconfiguration/v1/*.crd.yaml /manifests
 
 RUN if [ "${TAGS}" = "fcos" ]; then \
     # comment out non-base/extensions image-references entirely for fcos

@@ -39,7 +39,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	mcoResourceApply "github.com/openshift/machine-config-operator/lib/resourceapply"
 	mcoResourceRead "github.com/openshift/machine-config-operator/lib/resourceread"
-	"github.com/openshift/machine-config-operator/manifests"
 	"github.com/openshift/machine-config-operator/pkg/apihelpers"
 	"github.com/openshift/machine-config-operator/pkg/controller/build"
 	ctrlcommon "github.com/openshift/machine-config-operator/pkg/controller/common"
@@ -245,10 +244,6 @@ func (optr *Operator) syncCloudConfig(spec *mcfgv1.ControllerConfigSpec, infra *
 
 //nolint:gocyclo
 func (optr *Operator) syncRenderConfig(_ *renderConfig) error {
-	if err := optr.syncCustomResourceDefinitions(); err != nil {
-		return err
-	}
-
 	if optr.inClusterBringup {
 		klog.V(4).Info("Starting inClusterBringup informers cache sync")
 		// sync now our own informers after having installed the CRDs
@@ -611,31 +606,6 @@ func getIgnitionHost(infraStatus *configv1.InfrastructureStatus) (string, error)
 	}
 
 	return ignitionHost, nil
-}
-
-func (optr *Operator) syncCustomResourceDefinitions() error {
-	crds := []string{
-		"manifests/controllerconfig.crd.yaml",
-	}
-
-	for _, crd := range crds {
-		crdBytes, err := manifests.ReadFile(crd)
-		if err != nil {
-			return fmt.Errorf("error getting asset %s: %w", crd, err)
-		}
-		c := resourceread.ReadCustomResourceDefinitionV1OrDie(crdBytes)
-		_, updated, err := resourceapply.ApplyCustomResourceDefinitionV1(context.TODO(), optr.apiExtClient.ApiextensionsV1(), optr.libgoRecorder, c)
-		if err != nil {
-			return err
-		}
-		if updated {
-			if err := optr.waitForCustomResourceDefinition(c); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
 }
 
 func (optr *Operator) syncMachineConfigPools(config *renderConfig) error {
